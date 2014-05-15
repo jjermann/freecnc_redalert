@@ -1,0 +1,13 @@
+TESTS=sdlnet zlib xmms
+
+sdlnet_NAME   = SDL_net
+sdlnet_CFLAGS = `sdl-config --cflags`
+sdlnet_LIBS   = `sdl-config --libs` -lSDL_net
+
+zlib_NAME     = ZLib
+zlib_CFLAGS   =
+zlib_LIBS     = -lz
+
+xmms_NAME     = xmms
+xmms_CFLAGS   = `xmms-config --cflags`
+xmms_LIBS     = `xmms-config --libs`

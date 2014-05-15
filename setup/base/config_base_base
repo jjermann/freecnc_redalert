@@ -1,0 +1,7 @@
+DEBUG_FLAGS = -g
+#DEBUG_FLAGS = -g -DDEBUG
+OPT_FLAGS   =
+BASE_CFLAGS = -Wall -Werror $(DEBUG_FLAGS) $(OPT_FLAGS) `sdl-config --cflags`
+CFLAGS      = $(BASE_CFLAGS)
+CXXFLAGS    = $(subst $(CSTRICTNESS), $(CXXSTRICTNESS), $(CFLAGS))
+LIBS        = `sdl-config --libs`

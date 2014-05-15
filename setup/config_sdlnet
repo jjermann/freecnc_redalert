@@ -1,0 +1,2 @@
+NET_LIBS += -lSDL_net
+SDLNET=1

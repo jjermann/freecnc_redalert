@@ -1,0 +1,3 @@
+CSTRICTNESS = -ansi
+CXXSTRICTNESS = -std=c++98
+CFLAGS   += -pedantic $(CSTRICTNESS)

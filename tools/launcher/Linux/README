@@ -1,0 +1,7 @@
+README
+
+Author: Bernd Ritter <comrad@drunkencat.net>
+
+This Launcher needs Tcl/TK 8.x. 
+
+Copy it into the same directory, where the freecnc-binary is.

@@ -1,0 +1,4200 @@
+diff -Naur ./game/loadmap.cpp ./game/loadmap.cpp
+--- ./game/loadmap.cpp	2003-12-31 21:32:00.000000000 +0100
++++ ./game/loadmap.cpp	2004-01-25 14:21:24.000000000 +0100
+@@ -48,10 +48,6 @@
+ 
+     p::ppool = new PlayerPool(inifile, gamemode);
+ 
+-    if (inifile->readInt("basic", "newiniformat", 0) != 0) {
+-        logger->error("Red Alert maps not fully supported yet\n");
+-    }
+-
+     simpleSections(inifile);
+ 
+     try {
+@@ -375,6 +371,11 @@
+         loadOverlay(inifile);
+     }
+ 
++// @TODO: Fix multiplayer map loading (at the moment it returns 1 all the time)
++//    p::uspool->preloadUnitAndStructures(missionData.buildlevel);
++    p::uspool->preloadUnitAndStructures(98);
++    p::uspool->generateProductionGroups();
++
+     try {
+         for( keynum = 0;;keynum++ ) {
+             key = inifile->readKeyValue("SMUDGE", keynum);
+@@ -401,9 +402,6 @@
+         }
+     } catch(int) {}
+ 
+-    p::uspool->preloadUnitAndStructures(missionData.buildlevel);
+-    p::uspool->generateProductionGroups();
+-
+     try {
+         for( keynum = 0;;keynum++ ) {
+             key = inifile->readKeyValue("STRUCTURES", keynum);
+@@ -615,10 +613,11 @@
+     SHPBase::calculatePalettes();
+ 
+     /* Load the templates.ini */
+-    if( maptype == GAME_RA ) {
+-        templini = new INIFile("ratemplates.ini");
+-    } else {
++    try {
+         templini = new INIFile("templates.ini");
++    } catch(int) {
++        logger->error("Could not load the templates file\n");
++        throw LoadMapError();
+     }
+ 
+     index = 0;
+@@ -684,7 +683,7 @@
+     try {
+         for (Uint32 keynum = 0;;keynum++) {
+             key = inifile->readKeyValue("OVERLAY", keynum);
+-            if (sscanf(key->first.c_str(), "%u", &linenum) == 1) {
++            if (sscanf(key->first.c_str(), "%d", &linenum) == 1) {
+                 translateCoord(linenum, &tx, &ty);
+                 if (!validCoord(tx, ty))
+                     continue;
+diff -Naur ./game/map.cpp ./game/map.cpp
+--- ./game/map.cpp	2003-11-16 07:33:30.000000000 +0100
++++ ./game/map.cpp	2004-01-28 21:17:24.000000000 +0100
+@@ -80,6 +80,9 @@
+     oldmmap = NULL;
+     loading = false;
+     translate_64 = (getConfig().gamenum == GAME_TD);
++    for (Uint8 k=0; k<8; k++) {
++      for (Uint8 l=0; l<10; l++) movecost[k][l] = config.movecost[k][l];
++    }
+ }
+ 
+ 
+@@ -94,7 +97,6 @@
+ 
+     for( i = 0; i < pc::imagepool->size(); i++ )
+         delete (*pc::imagepool)[i];
+-
+     delete p::uspool;
+     delete p::ppool;
+     SDL_FreeSurface(minimap);
+@@ -392,9 +394,8 @@
+     valscroll = temp;
+ }
+ 
+-bool CnCMap::isBuildableAt(Uint16 pos, Unit* excpUn) const
++bool CnCMap::isBuildableAt(Uint16 pos, UnitOrStructureType* excpUn) const
+ {
+-    UnitOrStructure* uos = 0;
+     // Can't build where you haven't explored
+     if (!p::ppool->getLPlayer()->getMapVis()[pos]) {
+         return false;
+@@ -404,30 +405,34 @@
+     if (getTiberium(pos) != 0) {
+         return false;
+     }*/
+-    switch (terraintypes[pos]) {
+-    case t_rock:
+-    case t_tree:
+-    case t_water_blocked:
+-    case t_other_nonpass:
+-        return false;
+-    case t_water:
+-        // Eventually will check if building is supposed to be in the water
+-        return false;
+-    case t_road:
+-    case t_land:
+-        if (p::uspool->tileAboutToBeUsed(pos)) {
+-            return false;
+-        }
+-        uos = p::uspool->getUnitOrStructureAt(pos,0x80,true);
+-        if (uos == excpUn)
+-            return true;
+-        if (uos == 0)
+-            return true;
++
++    if (p::uspool->tileAboutToBeUsed(pos) ||
++       (p::uspool->getUnitOrStructureAt(pos,0x80,true))) {
++      return false;
++    }
++    if (excpUn) return (movecost[excpUn->getMoveType()][terraintypes[pos]]>0);
++    else return false;
++}
++
++bool CnCMap::isBuildableAt(Uint16 pos, Unit* excpUn) const
++{
++    UnitOrStructure* uos = 0;
++    // Can't build where you haven't explored
++    if (!p::ppool->getLPlayer()->getMapVis()[pos]) {
+         return false;
+-    default:
++    }
++    // Can't build on tiberium
++    /* TODO
++    if (getTiberium(pos) != 0) {
+         return false;
++    }*/
++
++    if (p::uspool->tileAboutToBeUsed(pos) ||
++       (uos=p::uspool->getUnitOrStructureAt(pos,0x80,true))) {
++         if (uos!=excpUn) return false;
+     }
+-    // Unreachable
++    if (excpUn) return (movecost[excpUn->getType()->getMoveType()][terraintypes[pos]]>0);
++    else return false;
+ }
+ 
+ Uint16 CnCMap::getCost(Uint16 pos, Unit* excpUn) const
+@@ -451,7 +456,19 @@
+      * terrain that lets them move faster to get mixed units to stick
+      * together or let faster moving units through a chokepoint first)
+      */
+-    switch(terraintypes[pos]) {
++    
++    if (excpUn==NULL) {
++        return 0xffff;
++    } else if (movecost[excpUn->getType()->getMoveType()][terraintypes[pos]]>0) {
++        cost = 1 + p::uspool->getTileCost(pos,excpUn);
++      //cost = movecost[excpUn->getType()->getMoveType()][terraintypes[pos]];
++    } else {
++        return 0xffff;
++    }
++    return cost;
++
++#if 0
++switch(terraintypes[pos]) {
+     case t_rock:
+     case t_tree:
+     case t_water:
+@@ -472,11 +489,11 @@
+      * to cost.
+      */
+     return cost;
++#endif
+ }
+ 
+ SDL_Surface* CnCMap::getMiniMap(Uint8 pixsize) {
+     static ImageProc ip;
+-    Uint16 tx,ty;
+     SDL_Rect pos = {0, 0, pixsize, pixsize};
+     SDL_Surface *cminitile;
+     if (pixsize == 0) {
+@@ -530,15 +547,15 @@
+      * To make things easier, ensure that the geometry is divisable by the
+      * specified width and height.
+      */
+-    tx = min(miniclip.sidew, (Uint16)minimap->w);
+-    ty = min(tx, (Uint16)minimap->h);
++    Uint16 tx = min(miniclip.sidew, (Uint16)minimap->w);
++    Uint16 ty = min(tx, (Uint16)minimap->h);
+     // w == width in pixels of the minimap
+     miniclip.w = pixsize*(int)floor((double)tx/(double)pixsize);
+     miniclip.h = pixsize*(int)floor((double)ty/(double)pixsize);
+     // x == offset in pixels from the top-left hand corner of the sidebar under
+     // the tab.
+-    miniclip.x = abs(miniclip.sidew-miniclip.w)/2;
+-    miniclip.y = abs(miniclip.sidew-miniclip.h)/2;
++    miniclip.x = abs(miniclip.sidew-miniclip.w)/2+20;
++    miniclip.y = abs(miniclip.sidew-miniclip.h)/2+5;
+     // Tilew == number of tiles visible in minimap horizontally
+     miniclip.tilew = miniclip.w/pixsize;
+     miniclip.tileh = miniclip.h/pixsize;
+diff -Naur ./game/path.cpp ./game/path.cpp
+--- ./game/path.cpp	2003-06-17 17:30:26.000000000 +0200
++++ ./game/path.cpp	2004-01-14 23:31:48.000000000 +0100
+@@ -10,6 +10,7 @@
+ #include <vector>
+ #include "ccmap.h"
+ #include "common.h"
++#include "unit.h"
+ 
+ struct TileRef {
+     Uint16 crx;
+@@ -46,7 +47,7 @@
+ };
+ 
+ 
+-Path::Path(Uint32 crBeg, Uint32 crEnd, Uint8 max_dist) : std::stack<Uint8>() {
++Path::Path(Uint32 crBeg, Uint32 crEnd, Uint8 max_dist, Unit* un) : std::stack<Uint8>() {
+     Uint16 startposx;
+     Uint16 startposy;
+     Uint16 stopposx;
+@@ -132,7 +133,7 @@
+                     ncrX = crX;
+                     ncrY = crY-1;
+                     crV = crU - p::ccmap->getWidth();
+-                    dwCost = cellTempU->g + p::ccmap->getCost(crV)*10;
++                    dwCost = cellTempU->g + p::ccmap->getCost(crV,un)*10;
+                 }
+                 break;
+             case 1:
+@@ -142,7 +143,7 @@
+                     ncrX = crX+1;
+                     ncrY = crY-1;
+                     crV = crU - p::ccmap->getWidth() + 1;
+-                    dwCost = cellTempU->g + p::ccmap->getCost(crV)*14;
++                    dwCost = cellTempU->g + p::ccmap->getCost(crV,un)*14;
+                 }
+                 break;
+             case 2:
+@@ -152,7 +153,7 @@
+                     ncrY = crY;
+                     ncrX = crX+1;
+                     crV = crU + 1;
+-                    dwCost = cellTempU->g + p::ccmap->getCost(crV)*10;
++                    dwCost = cellTempU->g + p::ccmap->getCost(crV,un)*10;
+                 }
+                 break;
+             case 3:
+@@ -162,7 +163,7 @@
+                     ncrX = crX+1;
+                     ncrY = crY+1;
+                     crV = crU + p::ccmap->getWidth() + 1;
+-                    dwCost = cellTempU->g + p::ccmap->getCost(crV)*14;
++                    dwCost = cellTempU->g + p::ccmap->getCost(crV,un)*14;
+                 }
+                 break;
+             case 4:
+@@ -172,7 +173,7 @@
+                     ncrX = crX;
+                     ncrY = crY+1;
+                     crV = crU + p::ccmap->getWidth();
+-                    dwCost = cellTempU->g + p::ccmap->getCost(crV)*10;
++                    dwCost = cellTempU->g + p::ccmap->getCost(crV,un)*10;
+                 }
+                 break;
+             case 5:
+@@ -182,7 +183,7 @@
+                     ncrX = crX-1;
+                     ncrY = crY+1;
+                     crV = crU + p::ccmap->getWidth() - 1;
+-                    dwCost = cellTempU->g + p::ccmap->getCost(crV)*14;
++                    dwCost = cellTempU->g + p::ccmap->getCost(crV,un)*14;
+                 }
+                 break;
+             case 6:
+@@ -192,7 +193,7 @@
+                     ncrY = crY;
+                     ncrX = crX-1;
+                     crV = crU - 1;
+-                    dwCost = cellTempU->g + p::ccmap->getCost(crV)*10;
++                    dwCost = cellTempU->g + p::ccmap->getCost(crV,un)*10;
+                 }
+                 break;
+             case 7:
+@@ -202,7 +203,7 @@
+                     ncrX = crX-1;
+                     ncrY = crY-1;
+                     crV = crU - p::ccmap->getWidth() - 1;
+-                    dwCost = cellTempU->g + p::ccmap->getCost(crV)*14;
++                    dwCost = cellTempU->g + p::ccmap->getCost(crV,un)*14;
+                 }
+                 break;
+             default:
+diff -Naur ./game/playerpool.cpp ./game/playerpool.cpp
+--- ./game/playerpool.cpp	2003-12-28 11:08:18.000000000 +0100
++++ ./game/playerpool.cpp	2004-02-05 16:52:07.000000000 +0100
+@@ -2,7 +2,6 @@
+ #pragma warning (disable: 4503)
+ #pragma warning (disable: 4786)
+ #endif
+-#include <algorithm>
+ #include <cstring>
+ #include "aiplugman.h"
+ #include "ccmap.h"
+@@ -15,6 +14,8 @@
+ #include "structure.h"
+ #include "unit.h"
+ #include "unitandstructurepool.h"
++#include "soundengine.h"
++#include "dispatcher.h"
+ 
+ /**
+  * @TODO Make hardcoded side names customisable (Needed to make RA support
+@@ -102,6 +103,11 @@
+     memset(sightMatrix,0,mapsize);
+     memset(buildMatrix,0,mapsize);
+     aiData = new AI::AIPluginData;
++    for (Uint32 i=0; i<10; i++) {
++        buildqueue[i] = NULL;
++    }
++
++    maxqueue = getConfig().maxqueue;
+ }
+ 
+ Player::~Player()
+@@ -317,11 +323,21 @@
+         p::ppool->playerUndefeated(this);
+     }
+     if (playernum == p::ppool->getLPlayerNum()) {
++
+         p::ppool->updateSidebar();
++
++    if (buildqueue[st->getPType()] == NULL) {
++        if (st->getPType()==0 && strcasecmp(((StructureType*)str->getType())->getTName(),"fact") == 0) {
++            buildqueue[0] = new BuildQueue(this, 1, 0);
++        } else {
++            buildqueue[st->getPType()] = new BuildQueue(this, maxqueue,st->getPType());
++        }
++    }
++
+         if (radarstat == 0) {
+-            if ((strcasecmp(((StructureType*)str->getType())->getTName(),"eye") == 0) ||
+-                (strcasecmp(((StructureType*)str->getType())->getTName(),"hq") == 0)  ||
+-                (strcasecmp(((StructureType*)str->getType())->getTName(),"dome") == 0)) {
++            if ( (strcasecmp(((StructureType*)str->getType())->getTName(),"eye") == 0) ||
++                    (strcasecmp(((StructureType*)str->getType())->getTName(),"hq") == 0) ||
++		    (strcasecmp(((StructureType*)str->getType())->getTName(),"dome") == 0) ) {
+                 p::ppool->updateRadar(1);
+                 radarstat = 1;
+             }
+@@ -329,6 +345,7 @@
+     }
+ }
+ 
++
+ inline Structure*& Player::getPrimary(UnitOrStructureType* uostype) {
+     return primary_structure[uostype->getPType()];
+ }
+@@ -337,7 +354,6 @@
+     return primary_structure[ptype];
+ }
+ 
+-
+ void Player::setPrimary(Structure* str)
+ {
+     StructureType* st = (StructureType*)str->getType();
+@@ -347,6 +363,7 @@
+             os->setPrimary(false);
+         }
+         os = str; // This works because os is a reference.
++
+         str->setPrimary(true);
+     }
+ }
+@@ -361,6 +378,7 @@
+     powerGenerated -= newpower.power;
+     powerUsed -= newpower.drain;
+     logger->gameMsg("%s has %d structs and %d units", playername, (Uint32)structurepool.size()-1, (Uint32)unitpool.size());
++
+     std::list<Structure*>::iterator it = std::find(sto.begin(), sto.end(), str);
+     if (sto.end() == it) {
+         logger->error("structures_owned[st] empty already!  This shouldn't happen!\n");
+@@ -371,7 +389,7 @@
+         std::list<Structure*>& prg = production_groups[st->getPType()];
+         it = std::find(prg.begin(), prg.end(), str);
+         if (prg.end() == it) {
+-            logger->error("production_groups[ptype] is already empty!  This shouldn't happen!\n");
++            logger->error("production_groups[ptype] is already empty! This shouldn't happen!\n");
+         } else {
+             prg.erase(it);
+         }
+@@ -385,6 +403,12 @@
+     }
+     if (playernum == p::ppool->getLPlayerNum()) {
+         p::ppool->updateSidebar();
++         
++        if (production_groups[st->getPType()].size() == 0) {
++            delete buildqueue[st->getPType()];
++            buildqueue[st->getPType()]=NULL;
++        }
++
+         if (radarstat == 1) {
+             if ((structures_owned[p::uspool->getStructureTypeByName("eye")].empty()) &&
+                 (structures_owned[p::uspool->getStructureTypeByName("hq")].empty())  &&
+@@ -527,7 +551,7 @@
+         mapVoB = &mapBld;
+         sight  = brad;
+     } else {
+-        logger->error("Can't happen? mode: %i\n",mode);
++        logger->error("Can't5~5~ happen? mode: %i\n",mode);
+     }
+     xstart = pos%p::ccmap->getWidth() - sight;
+     xsize = 2*sight+width;
+@@ -612,6 +636,44 @@
+     }
+ }
+ 
++BuildQueue *Player::getBuildQueue(const char *name, Uint8 mode)
++{
++  UnitType *type;
++ 
++  if(!mode) return buildqueue[0];
++  
++  type = p::uspool->getUnitTypeByName(name);
++
++  return buildqueue[type->getPType()];
++}
++ 
++/* return true when sidebar should be redrawed
++ *
++ * the sound thing is ugly... i'll watch out how the other sound
++ * stuff (there are some sound things in unit.cpp also) is done..
++ */
++bool Player::updateBuildQueues()
++{
++  return updateBuildQueues(NULL);
++}
++ 
++bool Player::updateBuildQueues(char **playsound)
++{
++  Uint32 ticks = SDL_GetTicks();
++  bool ret = false;
++
++  for (Uint8 i=0; i<10; i++) {
++      if(buildqueue[i]) {
++          buildqueue[i]->update(ticks);
++          ret |= buildqueue[i]->updateSidebar();
++          if(playsound != NULL)
++          buildqueue[i]->sound(playsound);
++      }
++  }
++   
++  return ret;
++}
++
+ PlayerPool::PlayerPool(INIFile* inifile, Uint8 gamemode)
+ {
+     lost = false;
+@@ -838,3 +900,299 @@
+         }
+     }
+ }
++
++BuildQueue::BuildQueue(Player *player, Uint8 max, Uint8 queuetype)
++{
++    maxunits = max;
++    this->player = player;
++    ready = false;
++    stopped = false;
++    frozen = false;
++    queue = new std::priority_queue<char*, std::vector<char*>, CompBuild>;
++    t_start = 0;
++    t_end = 0;  
++    cost = 0;   
++    upd = false;
++    play = false;
++    played = false;
++    buildspeed = getConfig().buildspeed;
++    qtype=queuetype;
++}
++ 
++ 
++void BuildQueue::start()
++{
++  /* get cost of the unit or structure */
++  cost = p::uspool->getTypeByName(queue->top())->getCost();
++
++  /* set up the timer */
++  t_start = SDL_GetTicks();;
++  t_end = t_start + cost * buildspeed;
++  money = 0;
++}
++ 
++int BuildQueue::add(const char *name)
++{
++  if (queue->empty() &&
++    p::uspool->getTypeByName(name)->getCost()>player->getMoney()) {
++      return BQUEUE_NOMONEY;
++  }
++
++  char *item;
++  
++  item = new char[14];
++  strcpy(item, name); 
++  
++  queue->push(item);
++  upd = true;
++  if(queue->size() == 1)
++    start();
++  else
++    queuecounts[name]++;
++  
++  return BQUEUE_CONSTRUCT;
++}
++
++void BuildQueue::sound(char **name)
++{
++  if(play) {
++      if(queueType())
++        if (getConfig().gamenum == GAME_RA) *name="unitrdy1.aud";
++          else *name = "unitredy.aud";
++      else
++        if (getConfig().gamenum == GAME_RA) *name="conscmp1.aud";
++          else *name = "constru1.aud";
++      play = false;
++  }
++}  
++   
++void BuildQueue::update(Uint32 ticks)
++{
++  Uint32 newmoney;
++  Sint32 total;   
++  
++  total = t_end - t_start;
++  frozen = false;
++
++  if(total > 0 && !queue->empty() && !ready) {
++      if(!stopped) {
++          newmoney = ((ticks - t_start) * cost) / total;
++      
++          if(newmoney >= cost) newmoney = cost;  
++
++          /* check money */
++          if((newmoney-money)>player->getMoney()) {
++              frozen = true;
++          } else {
++              frozen = false;
++              if(newmoney == cost) {
++                  play = true;
++                  ready = true;
++              }
++              pc::sfxeng->queueSound("clock1.aud");
++              player->decreaseMoney(newmoney - money);
++              money = newmoney;
++          }
++
++          upd = true;
++      }
++
++      if (frozen || stopped) {
++           /* when build has been stopped/frozen then adjust t_end/t_start */
++           t_end = ticks + (cost - money) * buildspeed;
++           t_start = t_end - total;
++          
++           upd = true;
++      }
++  }
++   
++  /* below is a temporary ugly early morning hack */
++  if(ready && qtype && !stopped) {
++      Structure* tmpstruct = player->getPrimary(p::uspool->getUnitTypeByName(queue->top()));
++      Uint16 pos = 0xffff;
++      if (0 != tmpstruct) {
++          pos = tmpstruct->getFreePos(p::uspool->getUnitTypeByName(queue->top()));
++      } else {
++          logger->error("No primary building set for %s\n",queue->top());
++      }
++
++      if (pos != 0xffff) {
++      /// @TODO run weap animation (let unit exit weap)
++          //tmpstruct->runAnim(5);
++      /// @TODO
++          //p::uspool->createUnit(queue->top(), pos, 0,player->getPlayerNum(), 256, 0);
++          p::dispatcher->unitCreate(queue->top(),pos, 0, player->getPlayerNum());
++          //tmpstruct->runAnim(6);
++          done();
++      } else {
++          stopped=true;
++          logger->error("No free position for %s\n", queue->top());
++      } /// @TODO: give message, set unit to ready in sidebar
++  }
++}  
++   
++bool BuildQueue::updateSidebar()
++{
++  if(upd)
++    {
++      upd = false;
++      return true;
++    }
++     
++  return false;
++}
++ 
++bool BuildQueue::isFull()
++{
++  return !(queue->empty() || queue->size() < maxunits);
++}
++
++void BuildQueue::getStatus(const char *name, Uint8 *num, bool *grayed, bool *stopped, bool *frozen, bool *ready, double *angle)
++{
++  *grayed = false;
++  *stopped = false;
++  *frozen = false;
++  *ready = false;  
++  *angle = M_PI * 2;
++  std::string sname = (std::string)name;
++  
++  *num = queuecounts[sname];
++  
++  if(!queue->empty())
++    {
++      *grayed = true;
++      
++      if(strcasecmp(name, queue->top()) == 0)
++        {
++          if(cost)
++            *angle = (double)money * M_PI * 2 / (double)cost;
++          else
++            *angle = 0.0;
++          
++          *ready = this->ready;
++          *stopped = this->stopped;
++          *frozen = this->frozen;
++        }
++      else
++        { 
++          *angle = 0.0;
++          *ready = false;
++          *stopped = false;
++          *frozen = false;
++        }
++    }
++}
++ 
++int BuildQueue::stop()
++{
++  if(!queue->empty())
++    {
++      stopped = true;
++      frozen = false;
++      upd = true;
++      return BQUEUE_STOPPED;
++    }
++     
++  return 0;
++}
++ 
++void BuildQueue::done()
++{
++  if(!queue->empty())
++    {
++      delete queue->top();
++      queue->pop();
++      ready = false;
++      stopped = false;
++      frozen = false;
++      upd = true;
++      t_start = 0;
++      t_end = 0;  
++      money = 0;  
++      cost = 0;   
++    }
++     
++  if(!queue->empty())
++    {
++      if(queuecounts[queue->top()])
++        queuecounts[queue->top()]--;
++      start();
++    }
++}
++ 
++int BuildQueue::cancel()
++{
++  if(!queue->empty())
++    {
++      player->increaseMoney(money);
++      done();
++      return BQUEUE_ABORTED;
++    }
++     
++  return 0;
++}
++ 
++int BuildQueue::resume()
++{
++  stopped = false;
++  if(ready) {
++      play=false;
++      return BQUEUE_READY;
++  } else {
++      upd = true;
++      return BQUEUE_CONSTRUCT;
++  }
++}
++ 
++bool BuildQueue::isTop(const char *name)
++{
++  if(queue->empty()) return false;
++  
++  return ( strcasecmp(queue->top(), name) == 0 );
++}
++ 
++int BuildQueue::click(const char *name, Uint8 button)
++{
++  std::string sname = (std::string)name;
++  
++  if(button == SDL_BUTTON_LEFT)
++    {
++      if(isTop(name))
++        {
++          if(stopped) return resume();
++          if(ready) return BQUEUE_PLACING;
++          if(frozen) return BQUEUE_FROZEN;
++        }
++         
++      if(!isFull()) return add(name);
++      
++      return BQUEUE_FULL;
++    }
++     
++  if(button == SDL_BUTTON_RIGHT)
++    {
++      if(isTop(name))
++        {
++          if(stopped || ready) return cancel();
++          
++          return stop();
++        }
++    }
++
++  return 0;
++}
++ 
++BuildQueue::~BuildQueue()
++{
++    char *item;
++  
++    while(!queue->empty()) {
++        item = queue->top();
++        queue->pop();
++        delete item; 
++    }
++     
++   delete queue;
++}
++
++
+diff -Naur ./game/projectileanim.cpp ./game/projectileanim.cpp
+--- ./game/projectileanim.cpp	2003-07-16 19:20:12.000000000 +0200
++++ ./game/projectileanim.cpp	2004-01-25 23:39:28.000000000 +0100
+@@ -56,7 +56,7 @@
+     owner->referTo();
+ 
+     heatseek = weap->isHeatseek();
+-    inaccurate = weap->isInaccurate();
++    spread = weap->getWarhead()->getSpread();
+     facing = 0;
+     fuel = weap->getFuel();
+     seekfuel = weap->getSeekFuel();
+@@ -142,6 +142,66 @@
+     owner->unrefer();
+ }
+ 
++void ProjectileAnim::applyDmg(Uint16 curpos, Sint16 curdmg)
++{
++    Unit* utarget;
++    for (Uint8 sud=0;sud<5;++sud) {
++      utarget = p::uspool->getUnitAt(curpos, sud);
++      if (utarget != NULL) {
++        // each soldier in that cell gets one third of
++        // normal damage
++        utarget->applyDamage(curdmg,weap,owner);
++      }
++    } // targeted soldier gets full normal damage
++    utarget = p::uspool->getUnitAt(dest, subdest);
++    if (utarget != NULL) { // soldier might have already been killed
++      utarget->applyDamage(curdmg,weap,owner);
++    }
++    Structure* starget = p::uspool->getStructureAt(curpos,weap->getWall());
++    if (starget != NULL) {
++        for (Uint8 i=0; i<dmgstructs.size(); i++) {
++            if (dmgstructs[i]==starget) {
++//logger->gameMsg("already damaged!");
++                return;
++            }
++        }
++//logger->gameMsg("another hit on %s: %i",starget->getType()->getTName(),curdmg);
++        dmgstructs.push_back(starget);
++        starget->applyDamage(curdmg,weap,owner);
++    }
++}
++
++void ProjectileAnim::applySpreadDmg()
++{
++    // At which distance from target cell are we at the moment?
++    Uint8 spreadrange=0;
++    // The divider (1+8*p*(1+p)/(1-p)/(1-p)) changes the spreadmg to be the
++    // damage applied in total => it results in way to few damage, so we mulitply
++    // it by 10... (hack)
++    float p=(float)spread/100.0;
++//    Uint16 spreaddmg=(Uint16)((float)weap->getDamage()/(1+8*p*(1+p)/(1-p)/(1-p)));
++//    spreaddmg*=5;
++    Uint16 spreaddmg=weap->getDamage();
++
++    Uint16 x,y;
++    p::ccmap->translateFromPos(l2o->cellpos, &x, &y);
++
++    applyDmg(dest,spreaddmg);
++
++    while (abs(spreaddmg)>1 && spreadrange < MAX_DMG_RANGE) {
++      spreaddmg=(Uint16)((float)(spreaddmg)*p);
++      spreadrange++;
++
++      for (int j=-spreadrange;j<spreadrange;j++) { 
++        applyDmg(p::ccmap->translateToPos(x+j,y+spreadrange),spreaddmg);
++        applyDmg(p::ccmap->translateToPos(x+j+1,y-spreadrange),spreaddmg);
++        applyDmg(p::ccmap->translateToPos(x+spreadrange,y+j+1),spreaddmg);
++        applyDmg(p::ccmap->translateToPos(x-spreadrange,y+j),spreaddmg);
++      }
++
++    }
++}
++
+ void ProjectileAnim::run()
+ {
+     Uint32 oldpos;
+@@ -208,36 +268,22 @@
+         new ExplosionAnim(1, dest, weap->getWarhead()->getEImage(),
+                           weap->getWarhead()->getESteps(), 0, 0);
+ 
++
++        utarget = p::uspool->getUnitAt(dest, subdest);
+         starget = p::uspool->getStructureAt(dest,weap->getWall());
+-        if( starget != NULL ) {
++        if( spread ) {
++            applySpreadDmg();
++            delete this;
++            return;
++        } else if ( utarget != NULL ) {
++            utarget->applyDamage(weap->getDamage(),weap,owner);
++            delete this;
++            return;
++        } else if( starget != NULL ) {
+             starget->applyDamage(weap->getDamage(),weap,owner);
+             delete this;
+             return;
+         }
+-
+-        utarget = p::uspool->getUnitAt(dest, subdest);
+-        if( (utarget != NULL) || inaccurate ) {
+-            if (inaccurate) {
+-                for (int sud=0;sud<5;++sud) {
+-                    utarget = p::uspool->getUnitAt(dest, sud);
+-                    if (utarget != NULL) {
+-                        // each soldier in that cell gets one third of
+-                        // normal damage
+-                        utarget->applyDamage((Sint16)((double)weap->getDamage()/3.0),weap,owner);
+-                    }
+-                } // targeted soldier gets full normal damage
+-                utarget = p::uspool->getUnitAt(dest, subdest);
+-                if (utarget != NULL) { // soldier might have already been killed
+-                    utarget->applyDamage((Sint16)(2.0*(double)weap->getDamage()/3.0),weap,owner);
+-                }
+-                delete this;
+-                return;
+-            } else {
+-                utarget->applyDamage(weap->getDamage(),weap,owner);
+-                delete this;
+-                return;
+-            }
+-        }
+         delete this;
+         return;
+     }
+diff -Naur ./game/structure.cpp ./game/structure.cpp
+--- ./game/structure.cpp	2003-12-28 14:27:33.000000000 +0100
++++ ./game/structure.cpp	2004-01-14 23:31:48.000000000 +0100
+@@ -1,5 +1,6 @@
+ #include <cstdlib>
+ #include <cstring>
++#include "config.h"
+ #include "ccmap.h"
+ #include "common.h"
+ #include "inifile.h"
+@@ -12,7 +13,7 @@
+ #include "unitandstructurepool.h"
+ #include "weaponspool.h"
+ 
+-StructureType::StructureType(const char* typeName, INIFile *structini,
++StructureType::StructureType(const char* typeName, INIFile *structini, 
+         INIFile* artini, const char* thext) : UnitOrStructureType()
+ {
+     SHPImage *shpimage, *makeimage;
+@@ -189,6 +190,18 @@
+         secondary_weapon = NULL;
+     }
+     cost = structini->readInt(tname, "cost", 0);
++
++    miscnames = structini->readString(tname,"movetype");
++    movetype=MT_build;
++    if (miscnames == NULL) {
++      // do nothing
++    } else {
++      if (strcasecmp(miscnames,"build") == 0)
++        movetype=MT_build;
++      else if (strcasecmp(miscnames,"build_water") == 0)
++        movetype=MT_build_water;
++    }
++
+     miscnames = structini->readString(tname,"armour","none");
+     if (miscnames == NULL)
+         armour = AC_none;
+@@ -229,6 +242,10 @@
+         delete[] tmpallow[i];
+     }
+     valid = true;
++
++#if GET_DEPLOY
++    deploywith = structini->readString(tname, "deploywith");
++#endif
+ }
+ 
+ 
+@@ -243,6 +260,11 @@
+     delete[] blocked;
+     delete[] shptnum;
+     delete[] name;
++#if GET_DEPLOY
++    if (deploywith) {
++        delete[] deploywith;
++    }
++#endif
+ }
+ 
+ Structure::Structure(StructureType *type, Uint16 cellpos, Uint8 owner,
+@@ -342,51 +364,51 @@
+ }
+ 
+ 
+-/// @BUG This literally doesn't handle edge cases.
+-/// @BUG Doesn't check that the terrain is passable (only buildable).
+-Uint16 Structure::getFreePos() {
+-    Uint8 i, xsize, ysize;
+-    Uint16 x, y, curpos;
++Uint16 Structure::getFreePos(UnitType* un)
++{
++    Uint8 i,xsize,ysize;
++    Uint16 x,y,curpos;
+ 
+-    xsize = type->getXsize();
+-    ysize = type->getYsize();
++    xsize=((StructureType*)this->getType())->getXsize();
++    ysize=((StructureType*)this->getType())->getYsize();
+ 
+-    curpos = cellpos;
++    curpos=cellpos;
+     p::ccmap->translateFromPos(curpos, &x, &y);
+-    y += ysize; // bottom left of building
+-    curpos = p::ccmap->translateToPos(x,y);
++    y+=ysize; //bottom left of building
++    curpos=p::ccmap->translateToPos(x,y);
+ 
+-    if (!p::ccmap->isBuildableAt(curpos))
+-        curpos = 0xffff;
++    if (!p::ccmap->isBuildableAt(curpos,un))
++        curpos=0xffff;
+ 
+-    for (i = 0; (i < xsize && 0xffff == curpos); ++i) {
++    for (i=0;(i<xsize && curpos==0xffff);i++) {
+         ++x;
+-        curpos = p::ccmap->translateToPos(x, y);
+-        if (!p::ccmap->isBuildableAt(curpos))
+-            curpos = 0xffff;
++        curpos=p::ccmap->translateToPos(x,y);
++        if (!p::ccmap->isBuildableAt(curpos,un))
++            curpos=0xffff;
+     }
+-    // ugly: I assume that the first blocks are noblocked - g0th
+-    for (i = 0;(i < ysize && 0xffff == curpos); ++i) {
++    //ugly: I assume that the first blocks are noblocked
++    for (i=0;(i<ysize && curpos==0xffff);i++) {
+         --y;
+-        curpos = p::ccmap->translateToPos(x, y);
+-        if (!p::ccmap->isBuildableAt(curpos))
+-            curpos = 0xffff;
++        curpos=p::ccmap->translateToPos(x,y);
++        if (!p::ccmap->isBuildableAt(curpos,un))
++            curpos=0xffff;
+     }
+-    for (i = 0; (i < (xsize+1) && 0xffff == curpos); ++i) {
++    for (i=0;(i<(xsize+1) && curpos==0xffff);i++) {
+         --x;
+-        curpos = p::ccmap->translateToPos(x, y);
+-        if (!p::ccmap->isBuildableAt(curpos))
++        curpos=p::ccmap->translateToPos(x,y);
++        if (!p::ccmap->isBuildableAt(curpos,un))
+             curpos=0xffff;
+     }
+-    for (i = 0; (i < ysize && 0xffff == curpos); ++i) {
++    for (i=0;(i<ysize && curpos==0xffff);i++) {
+         ++y;
+-        curpos = p::ccmap->translateToPos(x, y);
+-        if (!p::ccmap->isBuildableAt(curpos))
++        curpos=p::ccmap->translateToPos(x,y);
++        if (!p::ccmap->isBuildableAt(curpos,un))
+             curpos=0xffff;
+     }
+     return curpos;
+ }
+ 
++
+ void Structure::remove() {
+     if (!type->isWall()) {
+         p::ppool->getPlayer(owner)->lostStruct(this);
+@@ -452,6 +474,12 @@
+             case 2:
+                 buildAnim = new BTurnAnimEvent(speed,this,(mode>>4));
+                 break;
++            case 5:
++                buildAnim = new DoorAnimEvent(2,this,true);
++                break;
++            case 6:
++                buildAnim = new DoorAnimEvent(2,this,false);
++                break;
+             case 7:
+                 buildAnim = new RefineAnimEvent(speed,this,5);
+                 break;
+@@ -477,7 +505,7 @@
+             sec_anim = new RefineAnimEvent(2,this,param);
+             break;
+         case 5:
+-            sec_anim = new DoorAnimEvent(2,this,(param!=0));
++            sec_anim = new DoorAnimEvent(2,this,true);
+             break;
+         case 8:
+             //sec_anim = new RepairAnimEvent(3,this);
+@@ -546,17 +574,18 @@
+             if ((damaged = checkdamage())) { // This is correct
+                 if (odam != damaged) { // only play critical damage sound once
+                     if (pc::sfxeng != NULL) {
+-                        pc::sfxeng->queueSound("xplobig4.aud");
++                        if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("kaboom1.aud");
++                        else pc::sfxeng->queueSound("xplobig4.aud");
+                     }
+-                    setImageNum((imagenumbers[0]&~0x800)+type->getAnimInfo().dmgoff,0);
++                        setImageNum((imagenumbers[0]&~0x800)+type->getAnimInfo().dmgoff+1,0);
+                     if (type->getNumLayers() == 2)
+-                        setImageNum((imagenumbers[1]&~0x800)+type->getAnimInfo().dmgoff2,1);
++                        setImageNum((imagenumbers[1]&~0x800)+type->getAnimInfo().dmgoff2+1,1);
+                 }
+             } else {
+                 if (odam) {
+-                    setImageNum((imagenumbers[0]&~0x800)-type->getAnimInfo().dmgoff,0);
++                        setImageNum((imagenumbers[0]&~0x800)-type->getAnimInfo().dmgoff-1,0);
+                     if (type->getNumLayers() == 2)
+-                        setImageNum((imagenumbers[1]&~0x800)-type->getAnimInfo().dmgoff,1);
++                        setImageNum((imagenumbers[1]&~0x800)-type->getAnimInfo().dmgoff2-1,1);
+                     return;
+                 }
+             }
+@@ -564,6 +593,84 @@
+     }
+ }
+ 
++void Structure::applyDamage(Sint16 amount)
++{
++    if (exploding)
++        return;
++    Uint8 odam = damaged;
++    amount = amount;
++    if ((health-amount) <= 0) {
++        exploding = true;
++        if (type->isWall()) {
++            p::uspool->removeStructure(this);
++        } else {
++            BExplodeAnimEvent* boom = new BExplodeAnimEvent(1,this);
++            if (animating) {
++                buildAnim->setSchedule(boom);
++                buildAnim->stop();
++            } else {
++                buildAnim = boom;
++                p::aequeue->scheduleEvent(boom);
++            }
++        }
++        return;
++    } else if ((health-amount)>type->getMaxHealth()) {
++        health = type->getMaxHealth();
++    } else {
++        health -= amount;
++    }
++    if (animating) {
++        buildAnim->updateDamaged();
++    } else {
++        if (type->isWall()) {
++            if ((damaged = checkdamage())) { // This is correct
++                if (odam != damaged) {
++                    changeImage(0,16);
++                }
++            }
++        } else {
++            if ((damaged = checkdamage())) { // This is correct
++                if (odam != damaged) { // only play critical damage sound once
++                    if (pc::sfxeng != NULL) {
++                        if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("kaboom1.aud");
++                        else pc::sfxeng->queueSound("xplobig4.aud");
++                    }
++                        setImageNum((imagenumbers[0]&~0x800)+type->getAnimInfo().dmgoff+1,0);
++                    if (type->getNumLayers() == 2)
++                        setImageNum((imagenumbers[1]&~0x800)+type->getAnimInfo().dmgoff2+1,1);
++                }
++            } else {
++                if (odam) {
++                        setImageNum((imagenumbers[0]&~0x800)-type->getAnimInfo().dmgoff-1,0);
++                    if (type->getNumLayers() == 2)
++                        setImageNum((imagenumbers[1]&~0x800)-type->getAnimInfo().dmgoff2-1,1);
++                    return;
++                }
++            }
++        }
++    }
++}
++
++bool Structure::targetinRange()
++{
++    if (!canAttack()) return false;
++    Uint32 distance;   
++    Sint32 xtiles = cellpos % p::ccmap->getWidth() - getTargetCell() % p::ccmap->getWidth();
++    Sint32 ytiles = cellpos / p::ccmap->getWidth() - getTargetCell() / p::ccmap->getWidth();
++    distance = abs(xtiles)>abs(ytiles)?abs(xtiles):abs(ytiles);
++    return (distance <= type->getWeapon()->getRange());
++}
++
++bool Structure::targetinRange(Uint16 tarpos)
++{
++    if (!canAttack()) return false;
++    Uint32 distance;
++    Sint32 xtiles = cellpos % p::ccmap->getWidth() - getBPos(tarpos) % p::ccmap->getWidth();
++    Sint32 ytiles = cellpos / p::ccmap->getWidth() - getBPos(tarpos) / p::ccmap->getWidth();
++    distance = abs(xtiles)>abs(ytiles)?abs(xtiles):abs(ytiles);
++    return (distance <= type->getWeapon()->getRange());
++}
++
+ void Structure::attack(UnitOrStructure* target)
+ {
+     this->target = target;
+diff -Naur ./game/structureanims.cpp ./game/structureanims.cpp
+--- ./game/structureanims.cpp	2003-12-28 09:07:51.000000000 +0100
++++ ./game/structureanims.cpp	2004-01-14 23:31:48.000000000 +0100
+@@ -1,4 +1,5 @@
+ #include <cmath>
++#include "config.h"
+ #include "ccmap.h"
+ #include "common.h"
+ #include "playerpool.h"
+@@ -8,6 +9,7 @@
+ #include "unit.h"
+ #include "unitandstructurepool.h"
+ #include "weaponspool.h"
++#include "logger.h"
+ 
+ BuildingAnimEvent::BuildingAnimEvent(Uint32 p, Structure* str, Uint8 mode) : ActionEvent(p)
+ {
+@@ -57,6 +59,18 @@
+         strct->setImageNum(anim_data.frame1,1);
+     }
+     if (anim_data.done) {
++#ifdef GET_DEPLOY
++        /* HACK: Deploy a unit associated with a structure (e.g. harvester refinery) */
++        Uint16 tmp_pos;
++        const char *tmp=((StructureType*)strct->getType())->getDeployWith();
++        if (tmp)
++        {
++            tmp_pos=strct->getFreePos();
++            if (!(tmp_pos==0xffff)) {
++              p::uspool->createUnit(tmp,tmp_pos,0,strct->getOwner(), 256, 0);
++            }
++        }
++#endif
+         if (anim_data.mode != 6 && anim_data.mode != 5) {
+             strct->setImageNum(anim_data.damagedelta,0);
+             if (layer2) {
+@@ -96,8 +110,8 @@
+     anim_data.damaged = (strct->checkdamage() > 0);
+     if (anim_data.damaged) {
+         if (getaniminfo().dmgoff != 0 || getaniminfo().dmgoff2 != 0) {
+-            anim_data.damagedelta = getaniminfo().dmgoff;
+-            anim_data.damagedelta2 = getaniminfo().dmgoff2;
++            anim_data.damagedelta = getaniminfo().dmgoff+1;
++            anim_data.damagedelta2 = getaniminfo().dmgoff2+1;
+         } else {
+             anim_data.damagedelta = getaniminfo().loopend+1;
+             if (layer2) {
+@@ -105,7 +119,8 @@
+             }
+         }
+         if (!odam && pc::sfxeng != NULL && !p::ccmap->isLoading()) {
+-            pc::sfxeng->queueSound("xplobig4.aud");
++            if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("crmble2.aud");
++            else pc::sfxeng->queueSound("xplobig4.aud");
+         }
+     } else {
+         anim_data.damagedelta = 0;
+@@ -143,7 +158,6 @@
+ BuildAnimEvent::~BuildAnimEvent()
+ {}
+ 
+-
+ LoopAnimEvent::LoopAnimEvent(Uint32 p, Structure* str) : BuildingAnimEvent(p,str,1)
+ {
+     updateDamaged();
+@@ -193,14 +207,15 @@
+ BTurnAnimEvent::BTurnAnimEvent(Uint32 p, Structure* str, Uint8 face) : BuildingAnimEvent(p,str,6)
+ {
+     Uint8 layerface;
++    Uint8 loopend=getaniminfo().loopend;
+     updateDamaged();
+     targetface = face;
+-    layerface = (str->getImageNums()[0]&0x1f);
++    layerface = (str->getImageNums()[0]&loopend);
+     if (layerface == face) {
+         delete this;
+         return;
+     }
+-    if( ((layerface-face)&0x1f) < ((face-layerface)&0x1f) ) {
++    if( ((layerface-face)&loopend) < ((face-layerface)&loopend) ) {
+         turnmod = -1;
+     } else {
+         turnmod = 1;
+@@ -211,10 +226,11 @@
+ void BTurnAnimEvent::anim_func(anim_nfo* data)
+ {
+     Uint8 layerface;
+-    layerface = (str->getImageNums()[0]&0x1f);
+-    if( abs((layerface-targetface)&0x1f) > abs(turnmod) ) {
++    Uint8 loopend=getaniminfo().loopend;
++    layerface = (str->getImageNums()[0]&loopend);
++    if( abs((layerface-targetface)&loopend) > abs(turnmod) ) {
+         layerface += turnmod;
+-        layerface &= 0x1f;
++        layerface &= loopend;
+     } else {
+         layerface = targetface;
+     }
+@@ -340,6 +356,7 @@
+     float alpha;
+     Uint8 facing;
+     mwid = p::ccmap->getWidth();
++    Uint8 loopend=getaniminfo().loopend;
+     if( !strct->isAlive() || done ) {
+         delete this;
+         return;
+@@ -364,6 +381,7 @@
+         delete this;
+         return;
+     }
++#if 1
+     //Make sure we're facing the right way
+     if( xtiles == 0 ) {
+         if( ytiles < 0 ) {
+@@ -378,8 +396,27 @@
+         }
+     }
+     facing = (40-(Sint8)(alpha*16/M_PI))&0x1f;
++#endif
++#if 0
++    //Make sure we're facing the right way
++    if( ytiles == 0 ) {
++        if( xtiles < 0 ) {
++            alpha = M_PI_2;
++        } else {
++            alpha = 3*M_PI_2;
++        }
++    } else {
++        alpha = atan(-(float)xtiles/(float)ytiles);
++        if( ytiles < 0) {
++            alpha = M_PI+alpha;
++        } else if (xtiles>0 && ytiles > 0) {
++            alpha = M_PI*2+alpha;
++        }
++    }
++    facing = ((Uint8)((loopend+1)*alpha/2/M_PI))&loopend;
++#endif
+ 
+-    if ((strct->type->hasTurret())&&((strct->getImageNums()[0]&0x1f)!=facing)) { // turn to face target first
++    if ((strct->type->hasTurret())&&((strct->getImageNums()[0]&loopend)!=facing)) { // turn to face target first
+         setDelay(0);
+         strct->buildAnim = new BTurnAnimEvent(strct->type->getTurnspeed(), strct, facing);
+         strct->buildAnim->setSchedule(this,true);
+@@ -387,7 +424,6 @@
+         return;
+     }
+ 
+-
+     // We can shoot
+     strct->type->getWeapon()->fire(strct, target->getBPos(strct->getPos()), target->getSubpos());
+     setDelay(strct->type->getWeapon()->getReloadTime());
+@@ -420,7 +456,8 @@
+ void BExplodeAnimEvent::run()
+ {
+     if ((counter == 0) && !(getType()->isWall()) && (pc::sfxeng != NULL) && !p::ccmap->isLoading()) {
+-        pc::sfxeng->queueSound("crumble.aud");
++    if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("kaboom22.aud");
++    else pc::sfxeng->queueSound("crumble.aud");
+         // add code to draw flames
+     }
+     BuildingAnimEvent::run();
+@@ -429,7 +466,7 @@
+ void BExplodeAnimEvent::anim_func(anim_nfo* data)
+ {
+     ++counter;
+-    data->frame0 = lastframe;
++    data->frame0 = 0; //lastframe;
+     if (counter < 10) {
+         data->done = false;
+     } else {
+diff -Naur ./game/unit.cpp ./game/unit.cpp
+--- ./game/unit.cpp	2003-12-28 14:30:55.000000000 +0100
++++ ./game/unit.cpp	2004-01-14 23:31:48.000000000 +0100
+@@ -1,14 +1,15 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <string>
++#include "config.h"
+ #include "ccmap.h"
+ #include "inifile.h"
+ #include "logger.h"
+ #include "playerpool.h"
+ #include "shpimage.h"
+-#include "snprintf.h"
+ #include "soundengine.h"
+ #include "structure.h"
++#include "snprintf.h"
+ #include "unit.h"
+ #include "unitanimations.h"
+ #include "unitandstructurepool.h"
+@@ -32,9 +33,7 @@
+     SHPImage* shpimage;
+     Uint32 i;
+     string shpname(typeName);
+-#ifdef LOOPEND_TURN
+     char* imagename;
+-#endif
+     Uint32 shpnum;
+     Uint32 tmpspeed;
+     char* talkmode;
+@@ -50,7 +49,7 @@
+     try {
+         unitini->readKeyValue(typeName,0);
+     } catch (int) {
+-        logger->error("Unknown type: %s\n",typeName);
++//        logger->error("Unknown type: %s\n",typeName);
+         name = NULL;
+         shpnums = NULL;
+         return;
+@@ -66,24 +65,60 @@
+     }
+ 
+     unittype = unitini->readInt(tname, "unittype",0);
+-#ifdef LOOPEND_TURN
++
++    miscnames = unitini->readString(tname,"movetype");
++
++    movetype=MT_none;
++    if (miscnames == NULL)
++        switch (unittype) {
++        case 0:
++          movetype=MT_foot;
++          break; 
++        case 1:
++          movetype=MT_wheel;
++          break;
++        case 2:
++          movetype=MT_float;
++          break;
++        case 3:
++          movetype=MT_float;
++          break;
++        case 4:
++          movetype=MT_air;
++          break;
++        case 5:
++          movetype=MT_air;
++          break;
++        }
++    else {
++        if (strcasecmp(miscnames,"foot") == 0)
++          movetype=MT_foot;
++        else if (strcasecmp(miscnames,"track") == 0)
++          movetype=MT_track;
++        else if (strcasecmp(miscnames,"wheel") == 0)
++          movetype=MT_wheel;
++        else if (strcasecmp(miscnames,"float") == 0)
++          movetype=MT_float;
++        else if (strcasecmp(miscnames,"air") == 0)
++          movetype=MT_air;
++        delete[] miscnames;
++    }
++
+     animinfo.loopend = unitini->readInt(tname,"loopend",31);
+     animinfo.loopend2 = unitini->readInt(tname,"loopend2",31);
+-#endif
+ 
+     numlayers = unitini->readInt(tname, "layers", 1);
+ 
+     shpnums = new Uint32[numlayers];
+ 
+-#ifdef LOOPEND_TURN
+-/// @TODO clean this up, it's _wrong_ atm! (only true for numlayers=1) - g0th
+-    for (i = 0; i < numlayers; ++i) {
++//TODO: This is _wrong_ atm!!!! (only true for numlayers<=1)
++    for(i = 0; i < numlayers; i++) {
+         asprintf(&imagename, "image%d", i+1);
+         tmp = unitini->readString(tname, imagename);
+         free(imagename);
+         if (0 == tmp) {
+             shpname=tname;
+-            shpname += ".SHP";
++            shpname+=".SHP";
+         } else {
+             shpname=tmp;
+             delete[] tmp;
+@@ -93,6 +128,7 @@
+         } catch (ImageNotFound&) {
+             logger->warning("Image not found: \"%s\"\n", shpname.c_str());
+             numlayers = 0;
++            return;
+         }
+     }
+     shpnum = pc::imagepool->size();
+@@ -104,29 +140,11 @@
+         if (i==0) {
+             shpnum += (animinfo.loopend+1);
+         } else if (i==1) {
+-            shpnum += (animinfo.loopend2+1);
++            shpnum += (animinfo.loopend2+1);            
+         } else {
+             shpnum += 32;
+         }
+     }
+-#else
+-    shpname += ".SHP";
+-    try {
+-        shpimage = new SHPImage(shpname.c_str(), mapscaleq);
+-    } catch (ImageNotFound&) {
+-        logger->error("Image not found: \"%s\"\n", shpname.c_str());
+-        numlayers = 0;
+-        return;
+-    }
+-    shpnum = pc::imagepool->size();
+-    pc::imagepool->push_back(shpimage);
+-    shpnum <<= 16;
+-    for( i = 0; i < numlayers; i++ ) {
+-        /* get layer offsets from inifile */
+-        shpnums[i] = shpnum;
+-        shpnum += 32;
+-    }
+-#endif
+     is_infantry = false;
+ 
+     buildlevel = unitini->readInt(tname,"buildlevel",99);
+@@ -351,8 +369,10 @@
+         /** @todo This is a client thing. Will dispatch a "play these sounds"
+          * event when the time comes.
+          */
+-        pc::sfxeng->queueSound("constru2.aud");
+-        pc::sfxeng->queueSound("hvydoor1.aud");
++        if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("build5.aud");
++        else pc::sfxeng->queueSound("constru2.aud");
++        if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("hvydoor1.aud");
++        else pc::sfxeng->queueSound("placbldg1.aud");
+         p::uspool->createStructure(type->getDeployTarget(),calcDeployPos(),owner,(Uint16)(ratio*256.0f),0,true);
+     }
+     delete unitqueue;
+@@ -417,6 +437,26 @@
+     }
+ }
+ 
++bool Unit::targetinRange()
++{
++    if (!canAttack()) return false;
++    Uint32 distance;
++    Sint32 xtiles = cellpos % p::ccmap->getWidth() - getTargetCell() % p::ccmap->getWidth();
++    Sint32 ytiles = cellpos / p::ccmap->getWidth() - getTargetCell() / p::ccmap->getWidth();
++    distance = abs(xtiles)>abs(ytiles)?abs(xtiles):abs(ytiles);
++    return (distance <= type->getWeapon()->getRange());
++}
++
++bool Unit::targetinRange(Uint16 tarpos)
++{
++    if (!canAttack()) return false;
++    Uint32 distance;
++    Sint32 xtiles = cellpos % p::ccmap->getWidth() - tarpos % p::ccmap->getWidth();
++    Sint32 ytiles = cellpos / p::ccmap->getWidth() - tarpos / p::ccmap->getWidth();
++    distance = abs(xtiles)>abs(ytiles)?abs(xtiles):abs(ytiles); 
++    return (distance <= type->getWeapon()->getRange()); 
++}
++
+ void Unit::attack(UnitOrStructure* target)
+ {
+     attack(target, true);
+diff -Naur ./game/unitandstructurepool.cpp ./game/unitandstructurepool.cpp
+--- ./game/unitandstructurepool.cpp	2003-12-28 11:08:18.000000000 +0100
++++ ./game/unitandstructurepool.cpp	2004-02-05 16:06:05.000000000 +0100
+@@ -819,6 +819,7 @@
+ UnitOrStructureType* UnitAndStructurePool::getTypeByName(const char* typen)
+ {
+     UnitOrStructureType* retval;
++    /// @BUG: This gives an error message
+     retval = getUnitTypeByName(typen);
+     if (retval == NULL) {
+         return getStructureTypeByName(typen);
+@@ -1059,7 +1060,7 @@
+             secname = unitini->readSection(secnum);
+             ltech = unitini->readInt(secname.c_str(),"techlevel",100);
+             if (ltech == 100) {
+-                logger->warning("No techlevel defined for unit \"%s\"\n",secname.c_str());
++//                logger->warning("No techlevel defined for unit \"%s\"\n",secname.c_str());
+             } else {
+                 if (p::ccmap->getGameMode() == 0) {
+                     if (ltech <= techlevel) {
+@@ -1085,7 +1086,7 @@
+             secname = structini->readSection(secnum);
+             ltech = structini->readInt(secname.c_str(),"techlevel",100);
+             if (ltech == 100) {
+-                logger->warning("No techlevel defined for structure \"%s\"\n",secname.c_str());
++//                logger->warning("No techlevel defined for structure \"%s\"\n",secname.c_str());
+             } else {
+                 if (p::ccmap->getGameMode() == 0) {
+                     if (ltech <= techlevel) {
+@@ -1131,6 +1132,7 @@
+     Uint32 x,y;
+     UnitType* utype;
+     bool ivalid, ovalid, buildall;
++
+     buildall = pl->canBuildAll();
+     for (x=0;x<unittypepool.size();++x) {
+         utype = unittypepool[x];
+@@ -1165,6 +1167,7 @@
+                 int localPlayerSide, curside;
+                 char* tmpname;
+                 localPlayerSide = p::ppool->getLPlayer()->getSide();
++                localPlayerSide = PS_BAD;
+                 for (y=0;y<utype->getOwners().size();++y) {
+                     tmpname = utype->getOwners()[y];
+                     // note: should avoid hardcoded side names
+@@ -1195,6 +1198,7 @@
+     Uint32 x,y;
+     bool ivalid, ovalid, buildall;
+     StructureType* stype;
++
+     buildall = pl->canBuildAll();
+     for (x=0;x<structuretypepool.size();++x) {
+         stype = structuretypepool[x];
+@@ -1228,7 +1232,8 @@
+             if (ovalid) {
+                 int localPlayerSide, curside;
+                 char* tmpname;
+-                localPlayerSide = (p::ppool->getLPlayer()->getSide())&~PS_MULTI;
++//                localPlayerSide = (p::ppool->getLPlayer()->getSide())&~PS_MULTI;
++                localPlayerSide = PS_BAD;
+                 for (y=0;y<stype->getOwners().size();++y) {
+                     tmpname = stype->getOwners()[y];
+                     // note: should avoid hardcoded side names
+diff -Naur ./game/unitanimations.cpp ./game/unitanimations.cpp
+--- ./game/unitanimations.cpp	2003-12-26 21:52:59.000000000 +0100
++++ ./game/unitanimations.cpp	2004-01-14 23:31:48.000000000 +0100
+@@ -94,7 +94,7 @@
+ 
+     if( path == NULL ) {
+         p::uspool->setCostCalcOwnerAndType(un->owner, 0);
+-        path = new Path(un->getPos(), dest, range);
++        path = new Path(un->getPos(), dest, range, un);
+         if( !path->empty() ) {
+             startMoveOne(false);
+         } else {
+@@ -157,10 +157,7 @@
+ 
+ void MoveAnimEvent::startMoveOne(bool wasblocked)
+ {
+-#ifdef LOOPEND_TURN
+-    //TODO: transport boat is jerky (?)
+     Uint8 loopend=((UnitType*)un->type)->getAnimInfo().loopend;
+-#endif
+     Uint8 face;
+ 
+     newpos = p::uspool->preMove(un, path->top(), &xmod, &ymod);
+@@ -168,7 +165,7 @@
+         delete path;
+         path = NULL;
+         p::uspool->setCostCalcOwnerAndType(un->owner, 0);
+-        path = new Path(un->getPos(), dest, range);
++        path = new Path(un->getPos(), dest, range, un);
+         pathinvalid = false;
+         if( path->empty() ) {
+             xmod = 0;
+@@ -202,11 +199,7 @@
+         }
+     }
+ 
+-#ifdef LOOPEND_TURN 
+-    face = ((Sint8)((loopend+1)*(8-path->top())/8))&loopend;
+-#else
+-    face = (32-(path->top() << 2))&0x1f;
+-#endif
++    face = ((Uint8)((loopend+1)*(8-path->top())/8))&loopend;
+     path->pop();
+ 
+     moved_half = false;
+@@ -221,17 +214,10 @@
+         p::aequeue->scheduleEvent(this);
+ 
+     } else {
+-#ifdef LOOPEND_TURN 
+-        Uint8 curface = (un->getImageNum(0)&loopend);
++        Uint8 curface = un->getImageNum(0)&loopend;
+         Uint8 delta = (abs(curface-face))&loopend;
+         if( curface != face ) {
+-            if( (delta <= (Sint8)((loopend+1)/8)) || (delta >= (Sint8)(loopend*7/8))) {
+-#else
+-        Uint8 curface = (un->getImageNum(0)&0x1f);
+-        Uint8 delta = (abs(curface-face))&0x1f;
+-        if( (un->getImageNum(0)&0x1f) != face ) {
+-            if( (delta < 5) || (delta > 27) ) {
+-#endif
++            if( (delta <= (Uint8)((loopend+1)/8)) || (delta >= (Uint8)(loopend*7/8))) {
+                 un->turn(face,0);
+                 p::aequeue->scheduleEvent(this);
+             } else {
+@@ -256,7 +242,7 @@
+     if (pathinvalid) {
+         delete path;
+         p::uspool->setCostCalcOwnerAndType(un->owner, 0);
+-        path = new Path(un->getPos(), dest, range);
++        path = new Path(un->getPos(), dest, range, un);
+         pathinvalid = false;
+     }
+     if( !path->empty() && !stopping ) {
+@@ -265,7 +251,7 @@
+         if( dest != un->getPos() && !stopping ) {
+             delete path;
+             p::uspool->setCostCalcOwnerAndType(un->owner, 0);
+-            path = new Path(un->getPos(), dest, range);
++            path = new Path(un->getPos(), dest, range, un);
+             pathinvalid = false;
+         }
+         if( path->empty() || stopping ) {
+@@ -304,11 +290,7 @@
+ 
+ WalkAnimEvent::~WalkAnimEvent()
+ {
+-#ifdef LOOPEND_TURN
+     un->setImageNum((((UnitType*)un->type)->getAnimInfo().loopend+1)*dir/8,layer);
+-#else
+-    un->setImageNum(dir>>2,layer);
+-#endif
+     if (un->walkanim == this)
+         un->walkanim = NULL;
+ }
+@@ -336,22 +318,15 @@
+ 
+ TurnAnimEvent::TurnAnimEvent(Uint32 p, Unit *un, Uint8 dir, Uint8 layer) : UnitAnimEvent(p,un)
+ {
+-#ifdef LOOPEND_TURN   
+-    Uint8 loopend=((UnitType*)un->type)->getAnimInfo().loopend;
+-#endif
++    Uint8 loopend=((UnitType*)un->type)->getAnimInfo().loopend;            
+     //logger->debug("Turn cons (t%p u%p d%i l%i)\n",this,un,dir,layer);
+     Uint8 layerface;
+     this->un = un;
+     this->dir = dir;
+     this->layer = layer;
+     stopping = false;
+-#ifdef LOOPEND_TURN 
+     layerface = un->getImageNum(layer)&loopend;
+-    if( ((layerface-dir)&loopend) < ((dir-layerface)&loopend) ) {
+-#else
+-    layerface = un->getImageNum(layer)&0x1f;
+-    if( ((layerface-dir)&0x1f) < ((dir-layerface)&0x1f) ) {
+-#endif
++    if(((layerface-dir)&loopend) < ((dir-layerface)&loopend)) {
+         turnmod = -(((UnitType *)un->getType())->getTurnMod());
+     } else {
+         turnmod = (((UnitType *)un->getType())->getTurnMod());
+@@ -372,9 +347,7 @@
+ 
+ void TurnAnimEvent::run()
+ {
+-#ifdef LOOPEND_TURN   
+-    Uint8 loopend=((UnitType*)un->type)->getAnimInfo().loopend;
+-#endif
++    Uint8 loopend=((UnitType*)un->type)->getAnimInfo().loopend;            
+     Uint8 layerface;
+ 
+     //logger->debug("TurnAnim run (s%i)\n",stopping);
+@@ -383,17 +356,10 @@
+         return;
+     }
+ 
+-#ifdef LOOPEND_TURN   
+     layerface = un->getImageNum(layer)&loopend;
+     if( abs((layerface-dir)&loopend) > abs(turnmod) ) {
+         layerface += turnmod;
+         layerface &= loopend;
+-#else
+-    layerface = un->getImageNum(layer)&0x1f;
+-    if( abs((layerface-dir)&0x1f) > abs(turnmod) ) {
+-        layerface += turnmod;
+-        layerface &= 0x1f;
+-#endif
+     } else
+         layerface = dir;
+ 
+@@ -444,13 +410,13 @@
+ void UAttackAnimEvent::run()
+ {
+     Uint32 distance;
+-    Sint32 xtiles, ytiles;
++    Sint32 xtiles, ytiles; // upper right is positive
+     Uint16 atkpos;
+     float alpha;
+     Uint8 facing;
+-#ifdef LOOPEND_TURN
+-    Uint8 loopend2=((UnitType*)un->type)->getAnimInfo().loopend2;
+-#endif
++    Uint8 loopend;
++    if (un->type->getNumLayers() > 1 ) loopend=((UnitType*)un->type)->getAnimInfo().loopend2;
++    else loopend=((UnitType*)un->type)->getAnimInfo().loopend;
+ 
+     //logger->debug("attack run t%p u%p\n",this,un);
+     waiting = 0;
+@@ -468,7 +434,7 @@
+     }
+     atkpos = un->getTargetCell();
+ 
+-    xtiles = un->cellpos % p::ccmap->getWidth() - atkpos % p::ccmap->getWidth();
++    xtiles = -(un->cellpos % p::ccmap->getWidth() - atkpos % p::ccmap->getWidth());
+     ytiles = un->cellpos / p::ccmap->getWidth() - atkpos / p::ccmap->getWidth();
+     distance = abs(xtiles)>abs(ytiles)?abs(xtiles):abs(ytiles);
+ 
+@@ -481,35 +447,27 @@
+         return;
+     }
+     //Make sure we're facing the right way
+-    if( xtiles == 0 ) {
+-        if( ytiles < 0 ) {
+-            alpha = -M_PI_2;
+-        } else {
++    if( ytiles == 0 ) {
++        if( xtiles < 0 ) {
+             alpha = M_PI_2;
++        } else {
++            alpha = 3*M_PI_2;
+         }
+     } else {
+-        alpha = atan((float)ytiles/(float)xtiles);
+-        if( xtiles < 0 ) {
++        alpha = atan(-(float)xtiles/(float)ytiles);
++        if( ytiles < 0) {
+             alpha = M_PI+alpha;
++        } else if (xtiles>0 && ytiles > 0) {
++            alpha = M_PI*2+alpha;
+         }
+     }
+-#ifdef LOOPEND_TURN
+-    facing = ((Sint8)((loopend2+1)*(1-alpha/2/M_PI)+8))&loopend2;
+-    if (un->type->isInfantry()) {
+-        if (facing != (un->getImageNum(0)&loopend2)) {
+-            un->setImageNum((Sint8)((loopend2+1)*facing/8),0);
+-        }
+-    } else if (un->type->getNumLayers() > 1 ) {
+-        if (abs((int)(facing - (un->getImageNum(1)&loopend2))) > un->type->getROT()) {
+-#else
+-    facing = (40-(Sint8)(alpha*16/M_PI))&0x1f;
++    facing = ((Uint8)((loopend+1)*alpha/2/M_PI))&loopend;
+     if (un->type->isInfantry()) {
+-        if (facing != (un->getImageNum(0)&0x1f)) {
+-            un->setImageNum(facing>>2,0);
++        if (facing != (un->getImageNum(0)&loopend)) {
++            un->setImageNum((Uint8)((loopend+1)*facing/8),0);
+         }
+     } else if (un->type->getNumLayers() > 1 ) {
+-        if (abs((int)(facing - (un->getImageNum(1)&0x1f))) > un->type->getROT()) {
+-#endif
++        if (abs((int)(facing - (un->getImageNum(1)&loopend))) > un->type->getROT()) {
+             setDelay(0);
+             waiting = 2;
+             un->turn(facing,1);
+@@ -517,11 +475,7 @@
+             return;
+         }
+     } else {
+-#ifdef LOOPEND_TURN
+-        if (abs((int)(facing - un->getImageNum(0)&loopend2)) > un->type->getROT()) {
+-#else
+-        if (abs((int)(facing - un->getImageNum(0)&0x1f)) > un->type->getROT()) {
+-#endif
++        if (abs((int)(facing - un->getImageNum(0)&loopend)) > un->type->getROT()) {
+             setDelay(0);
+             waiting = 1;
+             un->turn(facing,0);
+diff -Naur ./game/weaponspool.cpp ./game/weaponspool.cpp
+--- ./game/weaponspool.cpp	2003-12-06 21:21:03.000000000 +0100
++++ ./game/weaponspool.cpp	2004-01-14 23:31:48.000000000 +0100
+@@ -24,6 +24,7 @@
+     char *tmpname;
+     SHPImage* temp;
+ 
++    spread = weapini->readInt(whname, "spread", 0);
+     tmpname = weapini->readString(whname, "explosionimage");
+     explosionimage = 0;
+     if( tmpname != NULL ) {
+@@ -163,7 +164,7 @@
+     damage     = weapini->readInt(wname, "damage", 10);
+     burst      = weapini->readInt(wname, "burst", 1);
+     heatseek   = (weapini->readInt(wname, "heatseek", 0) != 0);
+-    inaccurate = (weapini->readInt(wname, "inaccurate", 0) != 0);
++    charges    = (weapini->readInt(wname, "charges", 0) != 0);
+     fireimage  = pc::imagepool->size()<<16;
+     // pc::imagepool->push_back(new SHPImage("minigun.shp", mapscaleq));
+     firesound  = weapini->readString(wname, "firesound");
+@@ -236,6 +237,9 @@
+ }
+ 
+ void Weapon::fire(UnitOrStructure *owner, Uint16 target, Uint8 subtarget) {
++    Uint8 loopend=((UnitOrStructureType*)owner->getType())->getAnimInfo().loopend;
++    Uint8 loopend2=((UnitOrStructureType*)owner->getType())->getAnimInfo().loopend2;
++
+     if( firesound != NULL ) {
+         pc::sfxeng->queueSound(firesound);
+     }
+@@ -243,9 +247,9 @@
+         Uint32 length = numfireimages;
+         Uint8 facing;
+         if (owner->getType()->getNumLayers() == 1) {
+-            facing = (owner->getImageNum(0))&0x1f;
++            facing = (owner->getImageNum(0))&loopend;
+         } else {
+-            facing = (owner->getImageNum(1))&0x1f;
++            facing = (owner->getImageNum(1))&loopend2;
+         }
+         if (!owner->getType()->isInfantry()) {
+             facing >>= 2;
+diff -Naur ./include/ccmap.h ./include/ccmap.h
+--- ./include/ccmap.h	2003-12-06 21:21:03.000000000 +0100
++++ ./include/ccmap.h	2004-01-14 23:31:47.000000000 +0100
+@@ -14,6 +14,11 @@
+ 
+ class CnCMap;
+ class Unit;
++class UnitType;
++class Structure;
++class StructureType;
++class UnitOrStructure;
++class UnitOrStructureType;
+ class INIFile;
+ class SHPImage;
+ 
+@@ -109,7 +114,8 @@
+     bool isLoading() const {
+         return loading;
+     }
+-    bool isBuildableAt(Uint16 pos, Unit* excpUn = 0) const;
++    bool isBuildableAt(Uint16 pos, UnitOrStructureType* excpUn = 0) const;
++    bool isBuildableAt(Uint16 pos, Unit* excpUn) const;
+     Uint16 getCost(Uint16 pos, Unit* excpUn = 0) const;
+     Uint16 getWidth() const {
+         return width;
+@@ -120,7 +126,7 @@
+     Uint32 translateToPos(Uint16 x, Uint16 y) const;
+     void translateFromPos(Uint32 pos, Uint16 *x, Uint16 *y) const;
+     enum ttype {t_land=0, t_water=1, t_road=2, t_rock=3, t_tree=4,
+-        t_water_blocked=5, t_other_nonpass=7};
++        t_water_blocked=5, t_rough=6, t_other_nonpass=7, t_beach=8, t_ore=9};
+     enum ScrollDirection {s_none = 0, s_up = 1, s_right = 2, s_down = 4, s_left = 8,
+         s_upright = 3, s_downright = 6, s_downleft = 12, s_upleft = 9, s_all = 15};
+ 
+@@ -340,6 +346,7 @@
+     std::map<std::string, Uint8> resourcenames;
+ 
+     std::vector<Uint8> terraintypes;
++    unsigned int movecost[8][10];
+ 
+     std::map<Uint32, TerrainEntry> terrains;
+     std::map<Uint32, Uint16> overlays;
+diff -Naur ./include/common.h ./include/common.h
+--- ./include/common.h	2003-07-21 19:17:13.000000000 +0200
++++ ./include/common.h	2004-02-05 16:06:05.000000000 +0100
+@@ -144,6 +144,11 @@
+ };
+ 
+ /// @TODO: This shouldn't be here
++enum move_t {
++    MT_none = 0, MT_build = 1, MT_build_water = 2, MT_foot = 3, MT_track = 4, MT_wheel = 5, MT_float = 6, MT_air = 7
++};
++
++/// @TODO: This shouldn't be here
+ enum LOADSTATE {
+     PASSENGER_NONE = 0, PASSENGER_LOAD = 1, PASSENGER_UNLOAD = 2
+ };
+diff -Naur ./include/config.h ./include/config.h
+--- ./include/config.h	2003-12-22 14:58:33.000000000 +0100
++++ ./include/config.h	2004-01-30 16:45:32.000000000 +0100
+@@ -24,9 +24,10 @@
+ {
+     Uint32 videoflags;
+     Uint16 width, height, bpp, serverport;
+-    Uint8 intro, gamenum, gamemode, totalplayers, playernum,
+-        scrollstep, scrolltime, maxscroll, finaldelay, dispatch_mode;
++    Uint8 intro, gamenum, gamemode, totalplayers, playernum, moneyspeed, buildspeed,
++        scrollstep, scrolltime, maxscroll, maxqueue, finaldelay, dispatch_mode;
+     bool nosound, playvqa, allowsandbagging, debug;
++    unsigned int movecost[8][10];
+     SDL_GrabMode grabmode;
+     SDLKey bindablekeys[NUMBINDABLE];
+     Uint8 bindablemods[NUMBINDABLE];
+diff -Naur ./include/graphicsengine.h ./include/graphicsengine.h
+--- ./include/graphicsengine.h	2003-07-19 22:33:31.000000000 +0200
++++ ./include/graphicsengine.h	2004-01-29 14:35:16.000000000 +0100
+@@ -32,6 +32,7 @@
+     {
+         return &maparea;
+     }
++    void switchMiniZoom();
+     void drawVQAFrame(SDL_Surface *frame);
+     void clearBuffer();
+     void clearScreen();
+diff -Naur ./include/inifile.h ./include/inifile.h
+--- ./include/inifile.h	2003-12-26 18:11:47.000000000 +0100
++++ ./include/inifile.h	2004-01-14 23:31:47.000000000 +0100
+@@ -37,7 +37,6 @@
+     explicit INIFile(const char* filename);
+     ~INIFile();
+ 
+-    /// @TODO Would be nice if there was a version that returned a non-copy.
+     char* readString(const char* section, const char* value);
+     char* readString(const char* section, const char* value, const char* deflt);
+ 
+diff -Naur ./include/input.h ./include/input.h
+--- ./include/input.h	2003-12-26 22:12:46.000000000 +0100
++++ ./include/input.h	2004-01-14 23:31:47.000000000 +0100
+@@ -44,15 +44,16 @@
+     enum mouseloc {m_none = 0, m_map = 1, m_sidebar = 2, m_tab = 3};
+ 
+     enum actions {a_none = 0, a_place = 1, a_deploysuper = 2,
+-                  a_repair = 3, a_sell = 4};
++                  a_repair = 3, a_sell = 4, a_map = 5};
+ 
+     void updateMousePos();
+     void clickMap(int mx, int my);
+     void clickedTile(int mx, int my, Uint16* pos, Uint8* subpos);
+-    void clickSidebar(int mx, int my);
++    void clickSidebar(int mx, int my, Uint8 button);
+     void setCursorByPos(int mx, int my);
+     void selectRegion();
+     Uint16 checkPlace(int mx, int my);
++    Structure *checkButton(int mx, int my);
+ 
+     Uint16 width;
+     Uint16 height;
+@@ -72,7 +73,7 @@
+     bool rcd_scrolling;
+ 
+     StructureType *placetype;
+-    char placename[13];
++    char bname[13];
+     bool placeposvalid;
+     bool temporary_place_unit;
+ 
+diff -Naur ./include/path.h ./include/path.h
+--- ./include/path.h	2003-06-17 17:30:26.000000000 +0200
++++ ./include/path.h	2004-01-14 23:31:47.000000000 +0100
+@@ -9,12 +9,15 @@
+ 
+ #include <stack>
+ #include "SDL_types.h"
++#include "unit.h"
++#include "structure.h"
++#include "unitorstructure.h"
+ 
+ /* empty, push, pop, top */
+ class Path : public std::stack<Uint8>
+ {
+ public:
+-    Path(Uint32 crBeg, Uint32 crEnd, Uint8 max_dist);
++    Path(Uint32 crBeg, Uint32 crEnd, Uint8 max_dist, Unit* un);
+     ~Path();
+ };
+ 
+diff -Naur ./include/playerpool.h ./include/playerpool.h
+--- ./include/playerpool.h	2003-12-28 11:08:19.000000000 +0100
++++ ./include/playerpool.h	2004-02-05 16:31:36.000000000 +0100
+@@ -4,9 +4,20 @@
+ 
+ #include <list>
+ #include <map>
++#include <queue>
+ #include <vector>
+ #include "SDL_types.h"
+ #include "common.h"
++#include "actioneventqueue.h"
++
++#define BQUEUE_NOMONEY   1  /* not enough money */
++#define BQUEUE_CONSTRUCT 2  /* construction started */
++#define BQUEUE_STOPPED   3  /* stopped */
++#define BQUEUE_FROZEN    4  /* frozen for missing money */
++#define BQUEUE_ABORTED   5
++#define BQUEUE_FULL      6  /* queue is full */
++#define BQUEUE_READY     7  /* unit ready */
++#define BQUEUE_PLACING   8  /* placing a struct */
+ 
+ namespace AI {
+     class AIPluginData;
+@@ -21,9 +32,61 @@
+ class UnitOrStructure;
+ class UnitOrStructureType;
+ class UnitAndStructurePool;
++class Player;
++
++class BuildQueue
++{  
++      friend class CompBuild;
++public:
++      BuildQueue(Player* player, Uint8 max, Uint8 queuetype);
++      ~BuildQueue();
++      int click(const char *name, Uint8 button);
++      void update(Uint32 ticks);
++      /* outputs the current status for a button by name */
++      void getStatus(const char *name, Uint8 *num, bool *grayed, bool *stopped, bool *frozen, bool *ready, double *angle);
++      bool updateSidebar();
++      int add(const char *name);
++      int stop();
++      int cancel();
++      int resume();
++      void done(); 
++      bool isFull();
++      bool isTop(const char *name);
++      int queueType()
++      {
++        return qtype;
++      }
++      void sound(char **name);
++      int buildspeed;
++private:
++      void start();
++      Uint32 maxunits; /* max units in queue */
++      Uint32 t_start, t_end;
++      Uint32 cost;     /* cost of the top item */
++      Uint32 money;    /* money spent on top item until now */
++      bool stopped;    /* top item has been stopped */
++      bool frozen;     /* top item has been frozen */
++      bool ready;      /* top item is done */
++      bool upd;        /* when sidebar should be updated */
++      int qtype;   /* is a unit queue */
++      bool play;       /* play sound when its finished */
++      bool played;
++      Player *player;
++      std::priority_queue<char*, std::vector<char*>, CompBuild> *queue;
++      std::map<std::string, Uint8> queuecounts;
++};
++  
++class CompBuild
++{
++public:
++    bool operator()(char *x, char *y) {
++       return 0;
++    }
++};   
+ 
+ class Player
+ {
++friend class BuildQueue;
+ public:
+     explicit Player(const char *pname, INIFile *mapini);
+     ~Player();
+@@ -64,6 +127,8 @@
+     }
+     void builtStruct(Structure* str);
+     void lostStruct(Structure* str);
++    Structure*& getPrimary(UnitOrStructureType* uostype);
++    Structure*& getPrimary(Uint32 ptype);
+     Uint8 getMSide()
+     {
+         return multiside;
+@@ -148,8 +213,6 @@
+     {
+         return structures_owned[stype].size();
+     }
+-    Structure*& getPrimary(UnitOrStructureType* uostype);
+-    Structure*& getPrimary(Uint32 ptype);
+     void setPrimary(Structure* str);
+     std::vector<bool>& getMapVis()
+     {
+@@ -160,6 +223,7 @@
+     enum SOB_update {
+         SOB_SIGHT = 1, SOB_BUILD = 2
+     };
++
+     void setVisBuild(SOB_update mode, bool x);
+     std::vector<bool>& getMapBuildable()
+     {
+@@ -184,7 +248,15 @@
+     void enableBuildAll()
+     {
+         buildall = true;
+-    }
++        /* ugly: we must have the queues to build all */
++        if(!buildqueue[0]) buildqueue[0] = new BuildQueue(this, 1, 0);
++        for (Uint8 i=1; i<10; i++) {
++            if(!buildqueue[i]) buildqueue[i] = new BuildQueue(this, 11, i);
++        }
++    }
++    BuildQueue *getBuildQueue(const char *name, Uint8 mode);
++    bool updateBuildQueues();
++    bool updateBuildQueues(char **playsound);
+ private:
+     // Do not want player being constructed using default constructor
+     Player() {};
+@@ -212,6 +284,7 @@
+     std::map<Uint32, std::list<Structure*> > production_groups;
+     std::map<Uint32, Structure*> primary_structure;
+ 
++
+     std::vector<Player*> allies;
+     // players that have allied with this player, but this player
+     // has not allied in return.  Used to force an unally when player
+@@ -228,6 +301,9 @@
+     bool allmap, buildany, buildall;
+ 
+     AI::AIPluginData* aiData;
++
++    BuildQueue* buildqueue[10]; /* build queue */
++    int maxqueue;
+ };
+ 
+ /** @todo Currently the player starts are shuffled randomly without any way of
+diff -Naur ./include/projectileanim.h ./include/projectileanim.h
+--- ./include/projectileanim.h	2003-06-17 17:30:26.000000000 +0200
++++ ./include/projectileanim.h	2004-01-25 23:46:13.000000000 +0100
+@@ -7,11 +7,16 @@
+ # pragma warning (disable: 4786)
+ #endif
+ 
++#define MAX_DMG_RANGE 200
++
+ #include <map>
+ #include "SDL.h"
+ #include "actioneventqueue.h"
++#include "structure.h"
+ 
+ class Weapon;
++class Unit;
++class Structure;
+ class UnitOrStructure;
+ class UnitAndStructurePool;
+ class L2Overlay;
+@@ -38,16 +43,23 @@
+     ProjectileAnim(Uint32 p, Weapon *weap, UnitOrStructure* owner, Uint16 dest, Uint8 subdest);
+     ~ProjectileAnim();
+     void run();
++    void applyDmg(Uint16 curpos, Sint16 curdmg);
++    void applySpreadDmg();
+ private:
+     Weapon* weap;
+     UnitOrStructure* owner;
+     UnitOrStructure* target;
++    std::vector<Structure *> dmgstructs;
+     Uint16 dest;
+     Uint8 subdest;
++    // spread - percentage to multiply the damage after going further one more
++    //          cell away from the center of the explosion to a maximum cell
++    //          range or minimal damage. (default 0: accurate)
+     // Fuel - how many ticks left until projectile is removed.
+     // Seekfuel - how many ticks left until this projectile change course
+     // to track its target before falling back to flying in a straight line.
+-    Uint8 fuel, seekfuel;
++    Uint8 spread;
++    Uint16 fuel, seekfuel;
+     Sint8 xoffset;
+     Sint8 yoffset;
+     //Sint32 xmod, ymod;
+@@ -55,7 +67,7 @@
+     std::multimap<Uint16, L2Overlay*>::iterator l2entry;
+     double xdiff, ydiff;
+     double xmod, ymod, rxoffs, ryoffs;
+-    bool heatseek,inaccurate,fuelled;
++    bool heatseek,fuelled;
+     Uint8 facing;
+ };
+ 
+diff -Naur ./include/selection.h ./include/selection.h
+--- ./include/selection.h	2003-07-10 21:53:07.000000000 +0200
++++ ./include/selection.h	2004-01-14 23:31:47.000000000 +0100
+@@ -35,6 +35,8 @@
+     void purgeUnit(Unit* selunit);
+     void purgeStructure(Structure* selstruct);
+ 
++    bool targetinRange(Uint16 pos);
++    bool legalMove(Uint16 pos);
+     bool canAttack();
+     bool canMove();
+     bool isEnemy()
+diff -Naur ./include/sidebar.h ./include/sidebar.h
+--- ./include/sidebar.h	2003-12-27 19:34:58.000000000 +0100
++++ ./include/sidebar.h	2004-01-29 09:07:57.000000000 +0100
+@@ -32,6 +32,7 @@
+     Uint8 getButton(Uint16 x, Uint16 y);
+     void clickButton(Uint8 index, char* unitname, Uint8* createmode);
+     void resetButton();
++    void redrawButton();
+     void scrollSidebar(bool scrollup);
+     void updateSidebar();
+ 
+@@ -42,10 +43,11 @@
+     class SidebarError {};
+ 
+     enum sidebarop {sbo_null = 0, sbo_build = 1, sbo_scroll = 2, sbo_unit = 4,
+-        sbo_structure = 8, sbo_up = 16, sbo_down = 32};
++        sbo_structure = 8, sbo_up = 16, sbo_down = 32, sbo_repair = 64,
++        sbo_sell = 128, sbo_map = 256};
+ 
+     struct SidebarGeometry {
+-        Uint16 bw,bh;
++        Uint32 bw,bh;
+     };
+     const SidebarGeometry& getGeom() {return geom;}
+ private:
+@@ -71,9 +73,10 @@
+         ~SidebarButton();
+         void ChangeImage(const char* fname);
+         void ChangeImage(const char* fname, Uint8 number);
+-        SDL_Surface* getSurface() const {
+-            return pic;
+-        }
++//        SDL_Surface* getSurface() const {
++//            return pic;
++//        }
++        void blit(SDL_Surface *dest);
+         SDL_Rect getRect() const {
+             return picloc;
+         }
+@@ -81,11 +84,24 @@
+             return function;
+         }
+         static SDL_Surface* fallback(const char* fname);
++        void setStatus(Uint8 num, bool grayed, bool stopped, bool frozen, bool ready, double angle);
+     private:
++        /* Create a surface indicating progress of a build.
++           This surface has an alpha layer and will be blitted
++           over the icon. */
++        void drawText(SDL_Surface *dest, const char *s);
++        void drawNumber(SDL_Surface *dest);
++        SDL_Surface *grayButton(Uint32 color);
+         SDL_Surface* pic;
+         SDL_Rect picloc;
+         Uint8 function, palnum;
+         const char* theatre;
++        Uint8 num;
++        bool grayed;
++        bool stopped;
++        bool frozen;
++        bool ready;
++        double angle;
+     };
+ 
+     // 1 - DOS, 0 - GOLD
+@@ -106,7 +122,7 @@
+     SDL_Surface *sbar;
+     SDL_Rect sbarlocation;
+ 
+-    SDL_Surface *radarlogo;
++    SDL_Surface *radarlogo,*radarbg;
+ 
+     Font *gamefnt;
+ 
+@@ -114,7 +130,7 @@
+ 
+     const char* theatre;
+ 
+-    Uint8 buttondown;
++    Uint8 buttondown,startbuildbutton;
+     bool bd;
+ 
+     Uint8 buildbut;
+@@ -124,6 +140,7 @@
+     std::vector<char*> structicons;
+ 
+     const char* radarname;
++    const char* radarback;
+     RadarAnimEvent* radaranim;
+     bool radaranimating;
+ 
+@@ -139,7 +156,8 @@
+     Uint8 sidebar_busy_by_soldier;
+     Uint8 sidebar_busy_by_building;
+ 
+-    SidebarGeometry geom;
++    SidebarGeometry geom,startoffs,miniboffs;
++    Uint16 scrollb,mapheight;
+ };
+ 
+ #endif /* SIDEBAR_H */
+diff -Naur ./include/structure.h ./include/structure.h
+--- ./include/structure.h	2003-12-28 11:08:19.000000000 +0100
++++ ./include/structure.h	2004-01-14 23:31:47.000000000 +0100
+@@ -87,6 +87,9 @@
+     armour_t getArmour() const {
+         return armour;
+     }
++    move_t getMoveType() const {
++        return movetype;
++    }
+     animinfo_t getAnimInfo() const {
+         return animinfo;
+     }
+@@ -133,11 +136,17 @@
+     std::vector<UnitType*> getSpecificTypeAllow() const {
+         return specificTypeAllow;
+     }
++#ifdef GET_DEPLOY
++    const char *getDeployWith() {
++        return deploywith;
++    }
++#endif
+ private:
+     Uint16* shpnums, *shptnum;
+     Uint16 cost,maxhealth,makeimg,blckoff;
+     Sint8 xoffset,yoffset;
+     armour_t armour;
++    move_t movetype;
+     Uint8 turnspeed,sight,xsize,ysize,numshps,numwalllevels,defaultface;
+     Uint8 techlevel,buildlevel,maxpassengers;
+     Uint8 *blocked;
+@@ -158,6 +167,9 @@
+     std::vector<Uint8> passengerAllow;
+     // matches the unit's type name.
+     std::vector<UnitType*> specificTypeAllow;
++#ifdef GET_DEPLOY
++    char *deploywith;
++#endif
+ };
+ 
+ class BAttackAnimEvent;
+@@ -195,12 +207,13 @@
+         return cellpos;
+     }
+     Uint16 getBPos(Uint16 curpos) const;
+-    Uint16 getFreePos();
+     void remove();
+     Uint16 getSubpos() const {
+         return 0;
+     }
++    Uint16 getFreePos(UnitType* un);
+     void applyDamage(Sint16 amount, Weapon* weap, UnitOrStructure* attacker);
++    void applyDamage(Sint16 amount);
+     void runAnim(Uint32 mode);
+     void runSecAnim(Uint32 param);
+     void stopAnim();
+@@ -214,6 +227,8 @@
+     bool canAttack() const {
+         return type->getWeapon()!=NULL;
+     }
++    bool targetinRange();
++    bool targetinRange(Uint16 cellpos);
+     void attack(UnitOrStructure* target);
+     Uint16 getHealth() const {
+         return health;
+diff -Naur ./include/unit.h ./include/unit.h
+--- ./include/unit.h	2003-12-26 17:35:46.000000000 +0100
++++ ./include/unit.h	2004-01-14 23:31:47.000000000 +0100
+@@ -81,11 +81,13 @@
+     armour_t getArmour() const {
+         return armour;
+     }
+-#ifdef LOOPEND_TURN
++    move_t getMoveType() const {
++        return movetype;
++    }
+     animinfo_t getAnimInfo() const {
+         return animinfo;
+     }
+-#endif
++
+     const char* getRandTalk(TalkbackType type) const;
+     Weapon *getWeapon(bool primary = true) const {
+         return (primary?primary_weapon:secondary_weapon);
+@@ -125,10 +127,9 @@
+     Uint32 *shpnums;
+     Uint16 cost,maxhealth;
+     Uint8 numlayers,speed,turnspeed,turnmod,sight,offset,pipcolour;
+-    armour_t armour;
+-#ifdef LOOPEND_TURN
+     animinfo_t animinfo;
+-#endif
++    armour_t armour;
++    move_t movetype;
+     Uint8 techlevel,buildlevel,unittype;
+     Sint8 movemod;
+ 
+@@ -202,6 +203,8 @@
+     }
+     void move(Uint16 dest);
+     void move(Uint16 dest, bool stop);
++    bool targetinRange();
++    bool targetinRange(Uint16 cellpos);
+     void attack(UnitOrStructure* target);
+     void attack(UnitOrStructure* target, bool stop);
+     void turn(Uint8 facing, Uint8 layer);
+diff -Naur ./include/unitandstructurepool.h ./include/unitandstructurepool.h
+--- ./include/unitandstructurepool.h	2003-12-28 11:08:19.000000000 +0100
++++ ./include/unitandstructurepool.h	2004-01-14 23:31:47.000000000 +0100
+@@ -112,8 +112,8 @@
+     void addPrerequisites(UnitType* unittype);
+     void addPrerequisites(StructureType* structtype);
+ 
+-    /// scans both inifiles for things with techlevel <= that of the parameter
+-    /// then retrives those types.
++    /// scans both inifiles for things with techlevel <= that of
++    /// the parameter then retrives those types.
+     void preloadUnitAndStructures(Uint8 techlevel);
+ 
+     /// Generate reverse dependency information from what units we have loaded.
+@@ -144,9 +144,9 @@
+     std::multimap<Uint16, L2Overlay*> l2pool;
+     std::map<Uint16, Uint16> numl2images;
+ 
++    void splitORPreReqs(const char* prereqs, std::vector<StructureType*>* type_prereqs);
+     std::multimap<StructureType*, std::vector<StructureType*>* > struct_prereqs;
+     std::multimap<UnitType*, std::vector<StructureType*>* > unit_prereqs;
+-    void splitORPreReqs(const char* prereqs, std::vector<StructureType*>* type_prereqs);
+ 
+     std::map<std::string, Talkback*> talkbackpool;
+ 
+diff -Naur ./include/unitanimations.h ./include/unitanimations.h
+--- ./include/unitanimations.h	2004-01-21 16:13:58.000000000 +0100
++++ ./include/unitanimations.h	2004-01-14 23:31:47.000000000 +0100
+@@ -4,6 +4,8 @@
+ 
+ #include "SDL_types.h"
+ #include "actioneventqueue.h"
++#include "unit.h"
++#include "structure.h"
+ 
+ class Unit;
+ class UnitOrStructure;
+@@ -24,14 +26,18 @@
+     UnitAnimEvent* scheduled;
+ };
+ 
+-class MoveAnimEvent : public UnitAnimEvent {
++class MoveAnimEvent : public UnitAnimEvent
++{
+ public:
+     MoveAnimEvent(Uint32 p, Unit* un);
+     virtual ~MoveAnimEvent();
+     virtual void stop();
+     virtual void run();
+     virtual void update();
+-    virtual void setRange(Uint32 nr) {range = nr;}
++    virtual void setRange(Uint32 nr)
++    {
++        range = nr;
++    }
+ private:
+     bool stopping;
+     void startMoveOne(bool wasblocked);
+@@ -45,13 +51,18 @@
+     Uint32 range;
+ };
+ 
+-class WalkAnimEvent : public UnitAnimEvent {
++class WalkAnimEvent : public UnitAnimEvent
++{
+ public:
+     WalkAnimEvent(Uint32 p, Unit* un, Uint8 dir, Uint8 layer);
+     virtual ~WalkAnimEvent();
+-    virtual void stop() {stopping = true;}
++    virtual void stop()
++    {
++        stopping = true;
++    }
+     virtual void run();
+-    virtual void changedir(Uint8 ndir) {
++    virtual void changedir(Uint8 ndir)
++    {
+         stopping = false;
+         dir = ndir;
+         calcbaseimage();
+@@ -64,14 +75,19 @@
+     Uint8 dir, istep, layer, baseimage;
+ };
+ 
+-class TurnAnimEvent : public UnitAnimEvent {
++class TurnAnimEvent : public UnitAnimEvent
++{
+ public:
+     TurnAnimEvent(Uint32 p, Unit *un, Uint8 dir, Uint8 layer);
+     virtual ~TurnAnimEvent();
+     virtual void run();
+-    virtual void stop() {stopping = true;}
++    virtual void stop()
++    {
++        stopping = true;
++    }
+     void update() {}
+-    virtual void changedir(Uint8 ndir) {
++    virtual void changedir(Uint8 ndir)
++    {
+         stopping = false;
+         dir = ndir;
+     }
+@@ -83,7 +99,8 @@
+     Uint8 layer;
+ };
+ 
+-class UAttackAnimEvent : public UnitAnimEvent {
++class UAttackAnimEvent : public UnitAnimEvent
++{
+ public:
+     UAttackAnimEvent(Uint32 p, Unit *un);
+     virtual ~UAttackAnimEvent();
+diff -Naur ./include/unitorstructure.h ./include/unitorstructure.h
+--- ./include/unitorstructure.h	2003-12-28 11:08:19.000000000 +0100
++++ ./include/unitorstructure.h	2004-02-05 16:06:05.000000000 +0100
+@@ -22,8 +22,8 @@
+ class UnitOrStructureType {
+ private:
+ protected:
+-    Uint32 ptype;
+     bool valid;
++    Uint32 ptype;
+ public:
+     UnitOrStructureType();
+ 
+@@ -49,12 +49,16 @@
+      */
+     virtual armour_t getArmour() const = 0;
+ 
++    virtual move_t getMoveType() const = 0;
++
+     /** @brief Returns number of layers to render, 1 or 2.  The only TD
+      * structure that returns 2 is the weapons factory.  Units with
+      * turrets (tanks, humvee, buggy, missile launchers) return 2.
+      */
+     virtual Uint8 getNumLayers() const = 0;
+ 
++    virtual animinfo_t getAnimInfo() const = 0;
++
+     /**
+      * Units and structures can have at most two weapons.
+      * Currently any secondary weapons are ignored.
+@@ -98,7 +102,7 @@
+     virtual bool isValid() const;
+ 
+     /// @returns the production type of this type.
+-    virtual Uint32 getPType() const;
++    virtual Uint32 getPType() const;   
+     virtual void setPType(Uint32 p);
+ };
+ 
+diff -Naur ./include/weaponspool.h ./include/weaponspool.h
+--- ./include/weaponspool.h	2003-07-16 19:20:13.000000000 +0200
++++ ./include/weaponspool.h	2004-01-14 23:31:47.000000000 +0100
+@@ -12,6 +12,7 @@
+ #include <map>
+ #include "SDL.h"
+ #include "common.h"
++#include "structureanims.h"
+ 
+ class INIFile;
+ class Sound;
+@@ -49,13 +50,22 @@
+     {
+         return versus[(Uint8)armour];
+     }
++    Uint8 getSpread() const
++    {
++        return spread;
++    }
++
+ private:
++    // spread - percentage to multiply the damage after going further one more
++    //          cell away from the center of the explosion to a maximum cell
++    //          range or minimal damage. (default 0: accurate)
++            
+     //Uint8 explosiontype;
+     Uint32 explosionimage;
+     Uint8 explosionanimsteps;
+     char *explosionsound;
+     Uint8 infantrydeath;
+-    Uint8 blastradius;
++    Uint8 blastradius, spread;
+     unsigned int versus[5];
+     bool walls;
+     bool trees;
+@@ -91,11 +101,11 @@
+ public:
+     Weapon(const char* wname);
+     ~Weapon();
+-    Uint8 getReloadTime() const
++    Uint16 getReloadTime() const
+     {
+         return reloadtime;
+     }
+-    Uint8 getRange() const
++    Uint16 getRange() const
+     {
+         return range;
+     }
+@@ -125,19 +135,15 @@
+     {
+         return heatseek;
+     }
+-    bool isInaccurate() const
+-    {
+-        return inaccurate;
+-    }
+     double getVersus(armour_t armour) const
+     {
+         return (whead->getVersus(armour))/(double)100.0;
+     }
+-    Uint8 getFuel() const
++    Uint16 getFuel() const
+     {
+         return fuel;
+     }
+-    Uint8 getSeekFuel() const
++    Uint16 getSeekFuel() const
+     {
+         return seekfuel;
+     }
+@@ -145,20 +151,24 @@
+     {
+         return name.c_str();
+     }
++    const bool getCharges() const
++    {
++        return charges;
++    }
+ private:
++    // Fuel - how many ticks this projectile can move for until being removed.
++    // Seekfuel - how many ticks can this projectile change course to track its
++    // target before falling back to flying in a straight line.
+     Weapon() {};
+     Projectile *projectile;
+     Warhead *whead;
+     Uint8 speed;
+-    Uint8 range;
+-    Uint8 reloadtime;
++    Uint16 range;
++    Uint16 reloadtime;
+     Sint16 damage;
+     Uint8 burst;
+-    // Fuel - how many ticks this projectile can move for until being removed.
+-    // Seekfuel - how many ticks can this projectile change course to track its
+-    // target before falling back to flying in a straight line.
+-    Uint8 fuel, seekfuel;
+-    bool heatseek,inaccurate;
++    Uint16 fuel, seekfuel;
++    bool heatseek, charges;
+     Uint32 fireimage;
+     Uint32* fireimages;
+     Uint8 numfireimages,numfiredirections;
+diff -Naur ./ui/cursor.cpp ./ui/cursor.cpp
+--- ./ui/cursor.cpp	2003-12-06 21:21:04.000000000 +0100
++++ ./ui/cursor.cpp	2004-01-14 23:31:48.000000000 +0100
+@@ -41,10 +41,7 @@
+     y = 0;
+     cursor_offset = 0;
+ 
+-    if (getConfig().gamenum == GAME_RA)
+-        cursorpool = new CursorPool("racursors.ini");
+-    else
+-        cursorpool = new CursorPool("cursors.ini");
++    cursorpool = new CursorPool("cursors.ini");
+     ci = NULL;
+ 
+     transw = transicn->getImage(0);
+diff -Naur ./ui/font.cpp ./ui/font.cpp
+--- ./ui/font.cpp	2003-12-15 20:42:39.000000000 +0100
++++ ./ui/font.cpp	2004-01-14 23:31:48.000000000 +0100
+@@ -26,6 +26,7 @@
+     Uint16 *dataoffsets;
+     SDL_Surface *imgtmp;
+     SDL_Color white[] = {{0x0, 0x0, 0x0}, {0xff, 0xff, 0xff}};
++//    SDL_Color white[] = {{0xff,0xff,0xff,0},{0x0,0x0,0x0,0x0}};;
+     fontfile = VFS_Open(fontname);
+ 
+     if (0 == fontfile) {
+diff -Naur ./ui/input.cpp ./ui/input.cpp
+--- ./ui/input.cpp	2003-12-28 11:08:19.000000000 +0100
++++ ./ui/input.cpp	2004-02-05 18:00:54.000000000 +0100
+@@ -17,6 +17,7 @@
+ #include "soundengine.h"
+ #include "unit.h"
+ #include "unitandstructurepool.h"
++#include "graphicsengine.h"
+ 
+ /* The defines were introduced in SDL 1.2.5, but should work with all
+  * versions since mousewheel support was added.
+@@ -53,7 +54,7 @@
+         currentaction = a_place;
+         placeposvalid = true;
+         temporary_place_unit = true;
+-        strcpy(placename,"MCV");
++        strcpy(bname,"MCV");
+         p::ppool->getLPlayer()->setVisBuild(Player::SOB_BUILD,true);
+         p::ppool->getLPlayer()->setVisBuild(Player::SOB_SIGHT, true);
+         placetype = p::uspool->getStructureTypeByName("sbag");
+@@ -70,6 +71,7 @@
+     int mx, my;
+     Uint8 sdir, radarstat;
+     Uint8* keystate;
++    char *playsound;
+     static ConfigType config = getConfig();
+ 
+     while ( SDL_PollEvent(&event) ) {
+@@ -99,7 +101,7 @@
+                     }
+                 }
+                 if (mx > width-tabwidth && pc::sidebar->getVisible()) {
+-                    clickSidebar(mx,my);
++                    clickSidebar(mx,my, event.button.button);
+                 }
+             }
+             break;
+@@ -234,7 +236,7 @@
+                     }
+                     break;
+                 case SDLK_F7:
+-                    logger->gameMsg("MARK @ %i",SDL_GetTicks());
++                    logger->gameMsg("M A R K @ %i",SDL_GetTicks());
+                     logger->debug("Mark placed at %i\n",SDL_GetTicks());
+                     break;
+                 case SDLK_F8:
+@@ -246,6 +248,10 @@
+                         logger->gameMsg("Map revealed");
+                     }
+                     break;
++                case SDLK_m:
++                    p::ppool->getLPlayer()->increaseMoney(10000);
++                    logger->gameMsg("You gained 10000 Credits from a anonymous source");
++                    break;
+                 case SDLK_c:
+                     if (!p::ppool->getLPlayer()->canBuildAny()) {
+                         p::ppool->getLPlayer()->setVisBuild(Player::SOB_BUILD, true);
+@@ -254,11 +260,12 @@
+                     break;
+                 case SDLK_b:
+                     if (!p::ppool->getLPlayer()->canBuildAll()) {
+-                        p::uspool->preloadUnitAndStructures(98);
+-                        p::uspool->generateProductionGroups();
++//                        p::uspool->preloadUnitAndStructures(98);
++//                        p::uspool->generateProductionGroups();
+                         p::ppool->getLPlayer()->enableBuildAll();
+                         pc::sidebar->updateSidebar();
+                         logger->gameMsg("Prerequisites disabled");
++                        logger->gameMsg("From now on you're no longer safe from segfaults in the buildqueues :P");
+                     }
+                     break;
+                 case SDLK_g:
+@@ -334,7 +341,11 @@
+         selected.checkSelection();
+     }
+ 
+-    if (p::ppool->pollSidebar()) {
++    playsound = NULL;
++  
++    if (p::ppool->pollSidebar() || lplayer->updateBuildQueues(&playsound)) {
++        if(playsound)
++          pc::sfxeng->queueSound(playsound);
+         pc::sidebar->updateSidebar();
+     }
+     radarstat = p::ppool->statRadar();
+@@ -362,10 +373,12 @@
+     }
+     if (donecount == 1) {
+         if (p::ppool->hasWon()) {
+-            pc::sfxeng->queueSound("accom1.aud");
++            if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("misnwon1.aud");
++            else pc::sfxeng->queueSound("accom1.aud");
+             logger->gameMsg("MISSION ACCOMPLISHED");
+         } else {
+-            pc::sfxeng->queueSound("fail1.aud");
++            if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("misnlst1.aud");
++            else pc::sfxeng->queueSound("fail1.aud");
+             logger->gameMsg("MISSION FAILED");
+         }
+     }
+@@ -464,6 +477,9 @@
+             if (currentaction != a_deploysuper) {
+                 pc::cursor->setCursor(cursornum, CUR_NOANIM);
+             }
++        } else if (currentaction == a_repair || currentaction == a_sell) {
++            checkButton(mx, my);
++            return;
+         } else if (currentaction == a_place) {
+             checkPlace(mx, my);
+             return;
+@@ -490,28 +506,59 @@
+     Player* lplayer = p::ppool->getLPlayer();
+ 
+     clickedTile(mx, my, &pos, &subpos);
+-    if (pos == 0xffff)
+-        return;
++    if( pos == 0xffff ) return;
+ 
+     switch (currentaction) {
++    case a_repair:
++    // @TODO: do it properly...
++        curstructure=checkButton(mx, my);
++        if (curstructure) {
++            curstructure->applyDamage(-(Sint16)curstructure->getType()->getMaxHealth());
++            pc::sfxeng->queueSound("repair1.aud");
++        }
++        return;
++    case a_sell:
++    // @TODO: do it properly...
++        curstructure=checkButton(mx, my);
++        if (curstructure) {
++            p::uspool->removeStructure(curstructure);
++            if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("strusld1.aud");
++            else pc::sfxeng->queueSound("cashturn.aud");
++        }
++        return;
+     case a_place:
+         pos = checkPlace(mx, my);
+-        if (pos != 0xffff) {
++        if( pos != 0xffff ) {
+             currentaction = a_none;
+             if( temporary_place_unit ) {
+                 if (lplayer->isDefeated()) {
+                     lplayer->setVisBuild(Player::SOB_BUILD, false);
+                 }
+-                p::dispatcher->unitCreate(placename, pos, 0, lplayer->getPlayerNum());
++                p::dispatcher->unitCreate(bname, pos, 0, lplayer->getPlayerNum());
+             } else {
+-                p::dispatcher->structureCreate(placename, pos, lplayer->getPlayerNum());
+-                pc::sfxeng->queueSound("hvydoor1.aud");
+-                if (!p::uspool->getStructureTypeByName(placename)->isWall()) {
+-                    pc::sfxeng->queueSound("constru2.aud");
++                p::dispatcher->structureCreate(bname, pos, lplayer->getPlayerNum());
++                if (getConfig().gamenum == GAME_RA) { pc::sfxeng->queueSound("placbldg1.aud"); }
++                else { pc::sfxeng->queueSound("hvydoor1.aud"); }
++                if (!p::uspool->getStructureTypeByName(bname)->isWall()) {
++                    if (getConfig().gamenum == GAME_RA) { pc::sfxeng->queueSound("build5.aud"); }
++		    else { pc::sfxeng->queueSound("constru2.aud"); }
++//                    pc::sidebar->updateSidebar();
+                 }
++                lplayer->getBuildQueue(bname,0)->done();
+             }
+         }
+         return;
++    case a_deploysuper:
++        currentaction = a_none;
++        if (strcasecmp("ion",bname) == 0) {
++            pc::sfxeng->queueSound("ion1.aud");
++        } else if (strcasecmp("atom",bname) == 0) {
++            pc::sfxeng->queueSound("alaunch1.aud");
++        } else if (strcasecmp("pinf",bname) == 0) {
++            pc::sfxeng->queueSound("reinfor1.aud");
++        }
++        //TODO: atom, chronos, gps, spy, etc animation
++        return;
+     default:
+         break;
+     }
+@@ -532,7 +579,8 @@
+                         !(lplayer->isAllied(
+                               p::ppool->getPlayer(curunit->getOwner()))
+                          ) || kbdmod == k_ctrl) ) {
+-                selected.attackUnit(curunit);
++
++		selected.attackUnit(curunit);
+                 tmpunit = selected.getRandomUnit();
+                 if (tmpunit != NULL) {
+                     pc::sfxeng->queueSound(((UnitType *)tmpunit->getType())->getRandTalk(TB_atkun));
+@@ -566,7 +614,7 @@
+         } else if( !curunit->isSelected() ) {
+             /*if (!enemy && !selected.empty() && !selected.isEnemy() && selected.canLoad(curunit)) {
+               selected.loadUnits(curunit);
+-              } else { */
++              } else {*/
+             selected.clearSelection();
+             selected.addUnit(curunit, false);
+             //}
+@@ -642,9 +690,15 @@
+             }
+             return;
+         }
++    } else if ((kbdmod == k_ctrl) && selected.canAttack()) {
++        // @TODO: attack the position (no target)
++        tmpunit = selected.getRandomUnit();
++        if (tmpunit != NULL) {
++            pc::sfxeng->queueSound(((UnitType *)tmpunit->getType())->getRandTalk(TB_atkun));
++        }
+     } else {
+         p::uspool->setCostCalcOwnerAndType(lplayer->getPlayerNum(),0);
+-        if( selected.canMove() && p::ccmap->getCost(pos) < 0xfff0) {
++        if( selected.canMove() && selected.legalMove(pos)) {
+             if (!sndplayed) {
+                 pc::sfxeng->queueSound(((UnitType *)selected.getRandomUnit()->getType())->getRandTalk(TB_ack));
+                 sndplayed = true;
+@@ -716,11 +770,12 @@
+                 curunit = NULL;
+                 curstruct = NULL;
+             }
+-            if( curunit != NULL ) {
++            if( curunit != NULL) {
+                 enemy = !(lplayer->isAllied(p::ppool->getPlayer(curunit->getOwner())));
+                 if( !curunit->isSelected() ) {
+                     if( selected.canAttack() && (enemy || (kbdmod == k_ctrl))) {
+-                        pc::cursor->setCursor("attack");
++                        if (selected.targetinRange(pos)) pc::cursor->setCursor("attack");
++                        else pc::cursor->setCursor("noattack");
+                         return;
+                     }
+                     /*
+@@ -755,7 +810,8 @@
+                 enemy = !(lplayer->isAllied(p::ppool->getPlayer(curstruct->getOwner())));
+                 if( !curstruct->isSelected() ) {
+                     if( selected.canAttack() && (enemy || (kbdmod == k_ctrl))) {
+-                        pc::cursor->setCursor("attack");
++                        if (selected.targetinRange(pos)) pc::cursor->setCursor("attack");
++                        else pc::cursor->setCursor("noattack");
+                         return;
+                     } else if( !enemy || selected.empty() || selected.isEnemy()) {
+                         if (curstruct->isWall()) {
+@@ -799,9 +855,13 @@
+                         return;
+                     }
+                 }
++            } else if( selected.canAttack() && (kbdmod == k_ctrl) ) {
++                if (selected.targetinRange(pos)) pc::cursor->setCursor("attack");
++                else pc::cursor->setCursor("noattack");
++                return;
+             } else if( selected.canMove() ) {
+                 p::uspool->setCostCalcOwnerAndType(lplayer->getPlayerNum(),0);
+-                if( p::ccmap->getCost(pos) < 0xfff0 || !p::ppool->getLPlayer()->getMapVis()[pos]) {
++                if( selected.legalMove(pos) || !p::ppool->getLPlayer()->getMapVis()[pos]) {
+                     pc::cursor->setCursor("move");
+                 } else {
+                     pc::cursor->setCursor("nomove");
+@@ -856,9 +916,12 @@
+ 
+ }
+ 
+-void Input::clickSidebar(int mx, int my)
++
++void Input::clickSidebar(int mx, int my, Uint8 button)
+ {
+-    Uint8 createmode, butclick;
++    Uint8 createmode, butclick, rnd;
++    BuildQueue *bqueue;
++    bool sdep=true;
+ 
+     mx -= (width-tabwidth);
+     my -= pc::sidebar->getTabLocation()->h;
+@@ -867,58 +930,118 @@
+         /** @todo find a more elegant way to do this, as scrolling will blank
+          *  current place.
+          */
+-        strncpy(placename,"xxxx",4);
+-        pc::sidebar->clickButton(butclick,placename,&createmode);
+-
+-        if( (strncasecmp("xxxx",placename,4) == 0) ) {
+-            currentaction = a_none;
++        strncpy(bname,"xxxx",4);
++        pc::sidebar->clickButton(butclick,bname,&createmode);
++        if (strncasecmp("xxxx",bname,4) == 0) {
++            currentaction = a_none; 
+             return;
+         }
++        // check super weapons
++        if(strncasecmp("atom",bname,4) == 0) {
++            currentaction = a_deploysuper;
++            pc::cursor->setCursor("atom");
++
++            if (getConfig().gamenum == GAME_RA)
++            pc::sfxeng->queueSound("slcttgt1.aud");
++            else pc::sfxeng->queueSound("select1.aud");
++
++            pc::sfxeng->queueSound("aready1.aud");
++            return;// was scrolling or clicked on super weap
++        } else if (strncasecmp("ion",bname,3) == 0) {
++        } else if (strncasecmp("bomb",bname,4) == 0) {
++        } else if (strncasecmp("infx",bname,4) == 0) {
++            pc::sfxeng->queueSound("ironrdy1.aud");
++        } else if (strncasecmp("pbmb",bname,4) == 0) {
++        } else if (strncasecmp("sonr",bname,4) == 0) {
++            pc::sfxeng->queueSound("pulse1.aud");
++        } else if (strncasecmp("warp",bname,4) == 0) {
++            pc::sfxeng->queueSound("chrordy1.aud");
++        } else if (strncasecmp("pinf",bname,4) == 0) {
++        } else if (strncasecmp("smig",bname,4) == 0) {
++            pc::sfxeng->queueSound("spypln1.aud");
++        } else if (strncasecmp("gpss",bname,4) == 0) {
++            pc::sfxeng->queueSound("satlnch1.aud");
++            return;
++        // check Rest
++        } else if (strcasecmp("repair",bname) == 0) {
++            currentaction=a_repair;
++            selected.clearSelection();
++            return;
++        } else if (strcasecmp("sell",bname) == 0) {
++            currentaction=a_sell;
++            selected.clearSelection();
++            return;
++        } else if (strcasecmp("map",bname) == 0) {
++            pc::gfxeng->switchMiniZoom();
++            return;
++        } else sdep=false;
+ 
+-        /// @TODO Change createmode to an enumerated type (unit or building)
+-        // createmode == 10 => building
+-        if (createmode != 10) {
+-            Structure* tmpstruct = lplayer->getPrimary(p::uspool->getUnitTypeByName(placename));
+-            Uint16 pos = 0xffff;
+-            if (0 != tmpstruct) {
+-                pos = tmpstruct->getFreePos();
+-            } else {
+-                logger->error("No primary building set for %s\n", placename);
+-            }
++        //HACK to avoid copying stuff 10 times...
++        if (sdep) {
++            currentaction = a_deploysuper;
++            pc::cursor->setCursor("superdeploy");
+ 
+-            if (pos != 0xffff) {
+-                /// @TODO run weap animation (let unit exit weap)
+-                tmpstruct->runAnim(1);
+-                /// @TODO
+-                p::dispatcher->unitCreate(placename,pos, 0, lplayer->getPlayerNum());
+-            } else {
+-                logger->error("No free position for %s\n", placename);
+-            } /// @TODO: give message, set unit to ready in sidebar
+-            return;
+-        } else {
+-            // handle buildings
++            if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("slcttgt1.aud");
++            else pc::sfxeng->queueSound("select1.aud");
++
++            return;// was scrolling or clicked on super weap
++        }
++ 
++        /* get the build queue needed to build this item */
++        bqueue = lplayer->getBuildQueue(bname, createmode);
++
++        if(bqueue == NULL) return;
++
++        /* get the build queue status */
++        Uint8 q_num;
++        double q_angle;
++        bool q_ready, q_grayed, q_stopped, q_frozen;
++
++        bqueue->getStatus(bname,&q_num,&q_grayed,&q_stopped,&q_frozen,&q_ready,&q_angle);
++
++        switch(bqueue->click(bname, button))
++        {
++          case BQUEUE_NOMONEY:
++	    if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("nofunds1.aud");
++            else {
++	        rnd = (int) (rand() / 100);
++		if (rnd > 100) pc::sfxeng->queueSound("nocash1.aud");			
++	        else pc::sfxeng->queueSound("mocash1.aud");
++            }
++            break;
++          case BQUEUE_CONSTRUCT:
++            if (!q_grayed || q_stopped) {
++              if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("abldgin1.aud");
++                else pc::sfxeng->queueSound("bldging1.aud");
++            }
++            break;
++          case BQUEUE_FULL:
++            if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("bldgprg1.aud");
++              else pc::sfxeng->queueSound("bldg1.aud");
++            break;
++          case BQUEUE_STOPPED:
++            pc::sfxeng->queueSound("onhold1.aud");
++            break;
++          case BQUEUE_FROZEN:
++            break;
++          case BQUEUE_ABORTED:
++            if (getConfig().gamenum == GAME_RA) pc::sfxeng->queueSound("cancld1.aud");
++              else pc::sfxeng->queueSound("cancel1.aud");
++            break;
++          case BQUEUE_READY:
++            break;
++          case BQUEUE_PLACING:
+             placeposvalid = true;
+             temporary_place_unit = false;
+             currentaction = a_place;
+-            placetype = p::uspool->getStructureTypeByName(placename);
+-            return;
+-        }
+-#if 0
+-        // Older placement code
+-        placeposvalid = true;
+-        currentaction = a_place;
+-        // ugly++, place units as structures
+-        if( createmode ) {
+-            temporary_place_unit = true;
+-            placetype = p::uspool->getStructureTypeByName("sbag");
+-            return;
++            placetype = p::uspool->getStructureTypeByName(bname);
++            break;
+         }
+-        temporary_place_unit = false;
+-        placetype = p::uspool->getStructureTypeByName(placename);
+-#endif
++        return;
+     }
+ }
+ 
++
+ Uint16 Input::checkPlace(int mx, int my)
+ {
+     Uint16 x, y;
+@@ -986,7 +1109,7 @@
+             if (placetype->isBlocked(placeoff)) {
+                 ++blockedcount;
+                 placemat[placeoff] = 1;
+-                if (!p::ccmap->isBuildableAt(curpos)) {
++                if (!p::ccmap->isBuildableAt(curpos,p::uspool->getTypeByName(bname))) {
+                     placeposvalid = false;
+                     placemat[placeoff] = 4;
+                     continue;
+@@ -1017,3 +1140,33 @@
+     }
+     return pos;
+ }
++
++Structure *Input::checkButton(int mx, int my)
++{
++    Uint16 pos;
++    Uint8 subpos;
++    Structure *structure = NULL;
++
++    clickedTile(mx, my, &pos, &subpos);
++    if (pos != 0xffff &&
++        my >= maparea->y && my < maparea->y+maparea->h &&
++        mx >= maparea->x && mx < maparea->x+maparea->w) {
++
++        structure = p::uspool->getStructureAt(pos);
++
++        if (structure && structure->getOwner() == p::ppool->getLPlayerNum() &&
++            ((currentaction == a_repair &&
++              structure->getHealth() < structure->getType()->getMaxHealth()) ||
++             currentaction == a_sell)) {
++            pc::cursor->setCursor(currentaction==a_repair?"repair":"sell");
++        }
++        else {
++            pc::cursor->setCursor(currentaction==a_repair?"norepair":"nosell");
++            structure = NULL;
++        }
++    } else {
++        pc::cursor->setCursor(CUR_STANDARD, CUR_NOANIM);
++    }
++    pc::cursor->setXY(mx, my);
++    return structure;
++}
+diff -Naur ./ui/selection.cpp ./ui/selection.cpp
+--- ./ui/selection.cpp	2003-07-21 19:14:39.000000000 +0200
++++ ./ui/selection.cpp	2004-01-14 23:31:48.000000000 +0100
+@@ -55,6 +55,26 @@
+     }
+ }
+ 
++bool Selection::targetinRange(Uint16 pos)
++{
++    Uint16 i;
++    for (i=0;i<sel_units.size();++i) {
++        if (!sel_units[i]->targetinRange(pos)) return false;
++    }
++    for (i=0;i<sel_structures.size();++i) {
++        if (!sel_structures[i]->targetinRange(pos)) return false;
++    }
++    return true;
++}
++
++bool Selection::legalMove(Uint16 pos)
++{
++    for (Uint8 i=0;i<sel_units.size();++i) {
++        if (!p::ccmap->isBuildableAt(pos,sel_units[i]->getType())) return false;
++    }
++    return true;
++}
++
+ void Selection::addUnit(Unit *selunit, bool enemy)
+ {
+     selunit->select();
+diff -Naur ./ui/sidebar.cpp ./ui/sidebar.cpp
+--- ./ui/sidebar.cpp	2003-12-28 11:08:19.000000000 +0100
++++ ./ui/sidebar.cpp	2004-01-29 15:26:49.000000000 +0100
+@@ -4,6 +4,7 @@
+  ****************************************************************************/
+ #include <cstdio>
+ #include <cstdlib>
++#include <math.h>  
+ #include <stdexcept>
+ #include "common.h"
+ #include "config.h"
+@@ -17,12 +18,6 @@
+ #include "unitandstructurepool.h"
+ #include "vfs.h"
+ 
+-static const char* radarnames[] =
+-    {
+-        "hradar.nod", "hradar.gdi", "hradar.jp",
+-        "radar.nod",  "radar.gdi",  "radar.jp",
+-        "ussrradr.shp", "natoradr.shp", "natoradr.shp"
+-    };
+ 
+ using std::runtime_error;
+ 
+@@ -33,18 +28,42 @@
+  */
+ Sidebar::Sidebar(Player *pl, Uint16 height, const char *theatre)
+     : tab(0), sbar(0), radarlogo(0), visible(true), vischanged(true),
+-    theatre(theatre), buttondown(0), bd(false), radaranimating(false),
+-    unitoff(0), structoff(0), player(pl), scaleq(-1)
++    theatre(theatre), buttondown(0), bd(false), radaranim(NULL),
++    radaranimating(false), unitoff(0), structoff(0), player(pl), scaleq(-1)
+ {
+     const char* tmpname;
+     Uint8 side;
+     SHPImage *tmpshp;
+-    SDL_Surface *shadow;
+ 
++    static const char* radarnames[6];
++    static const char* radarbacks[3];
+ 
++    if (getConfig().gamenum == GAME_RA) {
++      radarnames[0]="ussrradr.shp";
++      radarnames[1]="natoradr.shp";
++      radarnames[2]="natoradr.shp";
++      radarbacks[0]="uradrfrm.shp";
++      radarbacks[1]="nradrfrm.shp";
++      radarbacks[2]="nradrfrm.shp";
++    } else {
++      radarnames[0]="hradar.nod";
++      radarnames[1]="hradar.gdi";
++      radarnames[2]="hradar.jp";
++      radarnames[3]="radar.nod";
++      radarnames[4]="radar.gdi";
++      radarnames[5]="radar.jp";
++    }
++
++
++    mapheight=height;
+     // If we can't load these files, there's no point in proceeding, thus we let
+     // the default handler for runtime_error in main() catch.
+-    gamefnt = new Font("scorefnt.fnt");
++    if (getConfig().gamenum == GAME_RA) {
++        gamefnt = new Font("12metfnt.fnt");
++    } else {
++        gamefnt = new Font("scorefnt.fnt");
++    }
++
+     if (getConfig().gamenum == GAME_TD) {
+         tmpname = VFS_getFirstExisting(2,"htabs.shp","tabs.shp");
+         if (tmpname == NULL) {
+@@ -69,8 +88,8 @@
+     }
+ 
+ 
+-    tmpshp->getImage(0, &tab, &shadow, 0);
+-    SDL_FreeSurface(shadow);
++    if (getConfig().gamenum == GAME_RA) tmpshp->getImage(6, &tab, 0, 0);
++    else tmpshp->getImage(0, &tab, 0, 0);
+     delete tmpshp;
+ 
+     tablocation.x = 0;
+@@ -89,10 +108,7 @@
+     } else {
+         side = isoriginaltype?5:2;
+     }
+-    /// @TODO HACK
+-    if (getConfig().gamenum == GAME_RA) {
+-        side += 6;
+-    }
++
+     radarname = radarnames[side];
+     try {
+         tmpshp = new SHPImage(radarname, scaleq);
+@@ -110,17 +126,26 @@
+             throw SidebarError();
+         }
+     }
+-
+-    tmpshp->getImage(0, &radarlogo, &shadow, 0);
+-    SDL_FreeSurface(shadow);
++    tmpshp->getImage(0, &radarlogo, 0, 0);
+     delete tmpshp;
+ 
++    if (getConfig().gamenum == GAME_RA) {
++        radarback = radarbacks[side];
++        try {
++            tmpshp = new SHPImage(radarback, scaleq);
++        } catch (ImageNotFound&) {
++            logger->error("Unable to load the radar-image! (Maybe you run c&c gold but have forgoten updatec.mix?)\n");
++            throw SidebarError();
++        }
++        tmpshp->getImage(1, &radarbg, 0, 0);
++        delete tmpshp;
++    }
+ 
+     sbarlocation.x = sbarlocation.y = sbarlocation.w = sbarlocation.h = 0;
+ 
+     // TODO: Should reuse inifiles loaded in unitandstructurepool.cpp
+-    structureini = new INIFile("conf/structure.ini");
+-    unitsini = new INIFile("conf/unit.ini");
++    structureini = new INIFile("structure.ini");
++    unitsini = new INIFile("unit.ini");
+ 
+     sidebar_busy_by_vehicle = 0;
+     sidebar_busy_by_soldier = 0;
+@@ -137,6 +162,8 @@
+     delete structureini;
+     SDL_FreeSurface(tab);
+     SDL_FreeSurface(radarlogo);
++    if (getConfig().gamenum == GAME_RA)
++        SDL_FreeSurface(radarbg);
+     SDL_FreeSurface(sbar);
+     delete gamefnt;
+     for (i=0; i < buttons.size(); ++i) {
+@@ -168,12 +195,13 @@
+     vischanged = true;
+ }
+ 
++
+ SDL_Surface *Sidebar::getSidebarImage(SDL_Rect location)
+ {
+     SDL_Rect dest, src;
+-    SDL_Surface *temp, *shadow;
+-    SHPImage *textureshp;
+-
++    SDL_Surface *temp;
++    SHPImage *tmpshp;
++    Uint16 buildpow,powersz;
+ 
+     if( location.w == sbarlocation.w && location.h == sbarlocation.h )
+         return sbar;
+@@ -186,15 +214,51 @@
+     location.x = 0;
+     location.y = 0;
+ 
+-    /// @TODO HACK
+-    if (isoriginaltype || getConfig().gamenum == GAME_RA) {
+-        SDL_FillRect(sbar, &location, SDL_MapRGB(sbar->format, 0xa0, 0xa0, 0xa0));
++    if (isoriginaltype) {
++    } else if (getConfig().gamenum == GAME_RA) {
++      try {
++        tmpshp=new SHPImage("powerbar.shp", scaleq);
++        tmpshp->getImage(1, &temp, 0, 0);
++        powersz=temp->h;
++        tmpshp->getImage(0, &temp, 0, 0);
++        
++        // powerbar top + middle (HACK!)
++        dest.x = 0;
++        dest.w = location.w;
++        dest.h = temp->h;
++        buildpow = ((mapheight+startoffs.bh-powersz)/18);
++        for (Uint8 j=(buildpow+2);j!=0;j--) {
++          dest.y = startoffs.bh-18+18*j;
++          SDL_BlitSurface( temp, NULL, sbar, &dest );
++        }
++
++        // Powerbar bottom
++        tmpshp->getImage(1, &temp, 0, 0);
++        delete tmpshp;
++        dest.x = 0;
++        dest.y = mapheight-temp->h-tab->h;
++        dest.w = location.w;
++        dest.h = temp->h;
++        SDL_BlitSurface(temp, NULL, sbar, &dest );
++        SDL_FreeSurface(temp);
++
++        // Powerbar state
++        dest.x = 2;
++        dest.y = 40;
++        dest.w = 4;
++        dest.h = 40;
++        SDL_FillRect(sbar, &dest, SDL_MapRGB(sbar->format, 0, 0, 0));
++        dest.x = 6;
++        dest.w = 1;
++        SDL_FillRect(sbar, &dest, SDL_MapRGB(sbar->format, 0, 0, 0));
++      } catch (ImageNotFound&) {
++        logger->error("Something's missing...\n");
++      }
+     } else {
+         try {
+-            textureshp = new SHPImage("btexture.shp", scaleq);
+-            textureshp->getImage(1, &temp, &shadow, 0);
+-            delete textureshp;
+-            SDL_FreeSurface(shadow);
++            tmpshp = new SHPImage("btexture.shp", scaleq);
++            tmpshp->getImage(1, &temp, 0, 0);
++            delete tmpshp;
+             dest.x = 0;
+             dest.w = location.w;
+             dest.h = temp->h;
+@@ -213,6 +277,13 @@
+     }
+     sbarlocation = location;
+ 
++    if (getConfig().gamenum == GAME_RA) {
++        dest.x = 0;
++        dest.y = 0;
++        dest.w = radarbg->w;
++        dest.h = radarbg->h;
++        SDL_BlitSurface( radarbg, NULL, sbar, &dest);
++    }
+     if (!Input::isMinimapEnabled()) {
+         dest.x = 0;
+         dest.y = 0;
+@@ -220,14 +291,10 @@
+         dest.h = radarlogo->h;
+         SDL_BlitSurface( radarlogo, NULL, sbar, &dest);
+     }
++
+     for (Sint8 x=buttons.size()-1;x>=0;--x) {
+-        dest = buttons[x]->getRect();
+-        temp = buttons[x]->getSurface();
+-        if (sbar != 0)
+-            SDL_FillRect(sbar,&dest,0x0);
+-        SDL_BlitSurface(temp, NULL, sbar, &dest);
++      buttons[x]->blit(sbar);
+     }
+-
+     return sbar;
+ }
+ 
+@@ -244,17 +311,30 @@
+     Uint16 scrollbase;
+     Uint8 t;
+ 
+-    Uint32 startoffs = tab->h+radarlogo->h;
+-
+-    SHPImage *strip;
++    startoffs.bh = tab->h+radarlogo->h;
++        
++    SHPImage *strip,*strip_scroll,*strip_power,*strip_minib;
+ 
+     tmpname = VFS_getFirstExisting(3,"stripna.shp","hstrip.shp","strip.shp");
+     if (tmpname == 0) {
+         logger->error("Unable to find strip images for sidebar, exiting\n");
+         throw SidebarError();
+     }
++
+     try {
+         strip = new SHPImage(tmpname, scaleq);
++        strip_scroll = new SHPImage("stripup.shp", scaleq);
++        if (getConfig().gamenum == GAME_RA)
++        {
++            strip_power = new SHPImage("powerbar.shp", scaleq);
++            strip_minib = new SHPImage("sell.shp", scaleq);
++        }
++        // @TODO: fix this
++        else
++        {
++            strip_power = new SHPImage("stripup.shp", scaleq);
++            strip_minib = new SHPImage("stripup.shp", scaleq);
++        }
+     } catch (ImageNotFound&) {
+         logger->error("Unable to load strip images for sidebar, exiting\n");
+         throw SidebarError();
+@@ -262,33 +342,75 @@
+ 
+     geom.bh = strip->getHeight();
+     geom.bw = strip->getWidth();
++    scrollb = strip_scroll->getHeight();
++    startoffs.bw = strip_power->getWidth();
++    miniboffs.bw = strip_minib->getWidth();
++    miniboffs.bh = strip_minib->getHeight();
+ 
+     delete strip;
+-
++    delete strip_scroll;
++    delete strip_power;
++    delete strip_minib;
++  
+     if (geom.bh > 100)
+         geom.bh = geom.bh>>2;
+ 
+-    buildbut = ((height-startoffs)/geom.bh)-2;
+-    startoffs += geom.bh;
++    if (getConfig().gamenum == GAME_RA) {
++      buildbut = ((height-startoffs.bh-scrollb)/geom.bh);
++  
++      // Repair
++      addButton(startoffs.bw,startoffs.bh-miniboffs.bh,"repair.shp",sbo_build,0); // 0
++      // Sell
++      addButton(startoffs.bw+(miniboffs.bw+10),startoffs.bh-miniboffs.bh,"sell.shp",sbo_build,0); // 1
++      // Map
++      addButton(startoffs.bw+2*(miniboffs.bw+10),startoffs.bh-miniboffs.bh,"map.shp",sbo_build,0); // 2
++
++      // Scrolling
++      scrollbase = startoffs.bh + geom.bh*buildbut;
++      addButton(startoffs.bw+geom.bw,scrollbase,"stripup.shp",sbo_scroll|sbo_unit|sbo_up,0); // 3
++      addButton(startoffs.bw,scrollbase,"stripup.shp",sbo_scroll|sbo_structure|sbo_up,0); // 4
++  
++      addButton(startoffs.bw+geom.bw+(geom.bw>>1),scrollbase,"stripdn.shp",sbo_scroll|sbo_unit|sbo_down,0); // 5
++      addButton(startoffs.bw+(geom.bw>>1),scrollbase,"stripdn.shp",sbo_scroll|sbo_structure|sbo_down,0); // 6
++  
++      // The order in which the addButton calls are made MUST be preserved
++      // Two loops are made so that all unit buttons and all structure buttons
++      // are grouped contiguously (4,5,6,7,...) compared to (4,6,8,10,...)
++  
++      for (t=0;t<buildbut;++t) {
++          addButton(startoffs.bw+geom.bw,startoffs.bh+geom.bh*t,"stripna.shp",sbo_build|sbo_unit,0);
++      }
++      for (t=0;t<buildbut;++t) {
++          addButton(startoffs.bw,startoffs.bh+geom.bh*t,"stripna.shp",sbo_build|sbo_structure,spalnum);
++      }
++    } else {
++      buildbut = ((height-startoffs.bh)/geom.bh)-2;
++      startoffs.bh += geom.bh;
+ 
+-    scrollbase = startoffs + geom.bh*buildbut;
+-    addButton(10+geom.bw,scrollbase,"stripup.shp",sbo_scroll|sbo_unit|sbo_up,0); // 0
+-    addButton(10,scrollbase,"stripup.shp",sbo_scroll|sbo_structure|sbo_up,0); // 1
+-
+-    addButton(10+geom.bw+(geom.bw>>1),scrollbase,"stripdn.shp",sbo_scroll|sbo_unit|sbo_down,0); // 2
+-    addButton(10+(geom.bw>>1),scrollbase,"stripdn.shp",sbo_scroll|sbo_structure|sbo_down,0); // 3
+-
+-    // The order in which the addButton calls are made MUST be preserved
+-    // Two loops are made so that all unit buttons and all structure buttons
+-    // are grouped contiguously (4,5,6,7,...) compared to (4,6,8,10,...)
+-
+-    for (t=0;t<buildbut;++t) {
+-        if (getConfig().gamenum == GAME_RA) addButton(10+geom.bw,startoffs+geom.bh*t,"stripna.shp",sbo_build|sbo_unit,0);
+-          else addButton(10+geom.bw,startoffs+geom.bh*t,"strip.shp",sbo_build|sbo_unit,0);
+-    }
+-    for (t=0;t<buildbut;++t) {
+-        if (getConfig().gamenum == GAME_RA) addButton(10,startoffs+geom.bh*t,"stripna.shp",sbo_build|sbo_structure,spalnum);
+-          else addButton(10,startoffs+geom.bh*t,"strip.shp",sbo_build|sbo_structure,spalnum);
++      // Repair
++      addButton(startoffs.bw,startoffs.bh-miniboffs.bh,"repair.shp",sbo_build,0); // 0
++      // Sell
++      addButton(startoffs.bw+(miniboffs.bw+10),startoffs.bh-miniboffs.bh,"sell.shp",sbo_build,0); // 1
++      // Map
++      addButton(startoffs.bw+2*(miniboffs.bw+10),startoffs.bh-miniboffs.bh,"sell.shp",sbo_build,0); // 2
++  
++      scrollbase = startoffs.bh + geom.bh*buildbut;
++      addButton(10+geom.bw,scrollbase,"stripup.shp",sbo_scroll|sbo_unit|sbo_up,0); // 0
++      addButton(10,scrollbase,"stripup.shp",sbo_scroll|sbo_structure|sbo_up,0); // 1
++  
++      addButton(10+geom.bw+(geom.bw>>1),scrollbase,"stripdn.shp",sbo_scroll|sbo_unit|sbo_down,0); // 2
++      addButton(10+(geom.bw>>1),scrollbase,"stripdn.shp",sbo_scroll|sbo_structure|sbo_down,0); // 3
++  
++      // The order in which the addButton calls are made MUST be preserved
++      // Two loops are made so that all unit buttons and all structure buttons
++      // are grouped contiguously (4,5,6,7,...) compared to (4,6,8,10,...)
++  
++      for (t=0;t<buildbut;++t) {
++          addButton(10+geom.bw,startoffs.bh+geom.bh*t,"strip.shp",sbo_build|sbo_unit,0);
++      }
++      for (t=0;t<buildbut;++t) {
++          addButton(10,startoffs.bh+geom.bh*t,"strip.shp",sbo_build|sbo_structure,spalnum);
++      }
+     }
+ 
+     //createdummylists();
+@@ -318,16 +440,31 @@
+  *
+  * @bug This is an evil hack that should be replaced by something more flexible.
+  */
+-void Sidebar::clickButton(Uint8 index, char* unitname, Uint8* createmode)
++void Sidebar::clickButton(Uint8 index, char* name, Uint8* createmode)
+ {
+     Uint8 f = buttons[index]->getFunction();
+-
+     switch (f&0x3) {
+     case 0:
+         return;
+         break;
+     case 1: // build
+-        build(index - 3 - ((f&sbo_unit)?0:buildbut),(f&sbo_unit),unitname, createmode);
++        if (index<startbuildbutton) {
++            downbutton(index);
++            switch (index) {
++            case 0:
++                strcpy(name, "repair");
++                break;
++            case 1:
++                strcpy(name, "sell");
++                break;
++            case 2:
++                strcpy(name, "map");
++                break;
++            }
++        } else {
++            build(index - startbuildbutton + 1 - ((f&sbo_unit)?0:buildbut),(f&sbo_unit),name, createmode);
++            break;
++        }
+         break;
+     case 2: // scroll
+         downbutton(index);
+@@ -339,8 +476,7 @@
+     }
+ }
+ 
+-/// @TODO createmode needs to become an enumerated type
+-void Sidebar::build(Uint8 index, Uint8 type, char* unitname, Uint8* createmode)
++void Sidebar::build(Uint8 index, Uint8 type, char* name, Uint8* createmode)
+ {
+     Uint8* offptr;
+     std::vector<char*>* vecptr;
+@@ -348,21 +484,18 @@
+     if (type) {
+         offptr = &unitoff;
+         vecptr = &uniticons;
+-        *createmode = 0;
++        *createmode = 1;
+     } else {
+         offptr = &structoff;
+         vecptr = &structicons;
+-        *createmode = 10;
++        *createmode = 0;
+     }
+ 
+     if ( (unsigned)(*vecptr).size() > ((unsigned)(*offptr)+index - 1) ) {
+-        strncpy(unitname,(*vecptr)[(*offptr+index-1)],13);
+-        unitname[strlen((*vecptr)[(*offptr+index-1)])-8] = 0x0;
++        strncpy(name,(*vecptr)[(*offptr+index-1)],13);
++        name[strlen((*vecptr)[(*offptr+index-1)])-8] = 0x0;
+     }
+ 
+-    if (*createmode == 0) {
+-        *createmode = (Uint32) unitsini->readInt(unitname, "unittype");
+-    }
+ }
+ 
+ void Sidebar::scrollbuildlist(Uint8 dir, Uint8 type)
+@@ -453,48 +586,110 @@
+ void Sidebar::updateicons(void)
+ {
+     Uint8 i;
+-    SDL_Rect dest;
++    BuildQueue *queue;
++    char placename[14];
++    double angle;
++    Uint8 num;
++    bool grayed=false, stopped=false, ready=false, frozen=false;
++
++    if (getConfig().gamenum == GAME_RA) startbuildbutton=7;
++    else startbuildbutton=7;
+ 
+     for (i=0;i<buildbut;++i) {
+         if ((unsigned)(i+unitoff)>=(unsigned)uniticons.size()) {
+-            if (getConfig().gamenum == GAME_RA) buttons[4+i]->ChangeImage("stripna.shp");
+-            else buttons[4+i]->ChangeImage("strip.shp");
++            if (getConfig().gamenum == GAME_RA) buttons[startbuildbutton+i]->ChangeImage("stripna.shp");
++            else buttons[startbuildbutton+i]->ChangeImage("strip.shp");
+         } else {
+-            buttons[4+i]->ChangeImage(uniticons[i+unitoff]);
++            strncpy(placename, uniticons[i+unitoff], 13);
++            placename[strlen(placename) - 8] = '\0';
++            queue = player->getBuildQueue(placename, 1);
++          
++            if(queue) {
++              queue->getStatus(placename, &num, &grayed, &stopped, &frozen, &ready, &angle);
++              buttons[startbuildbutton+i]->setStatus(num, grayed, stopped, frozen, ready, angle);
++            }
++             
++            buttons[startbuildbutton+i]->ChangeImage(uniticons[i+unitoff]);
+         }
+     }
+     for (i=0;i<buildbut;++i) {
+         if ((unsigned)(i+structoff)>=(unsigned)structicons.size()) {
+-            if (getConfig().gamenum == GAME_RA) buttons[buildbut+4+i]->ChangeImage("stripna.shp");
+-            else buttons[buildbut+4+i]->ChangeImage("strip.shp");
++            if (getConfig().gamenum == GAME_RA) buttons[buildbut+startbuildbutton+i]->ChangeImage("stripna.shp");
++            else buttons[buildbut+startbuildbutton+i]->ChangeImage("strip.shp");
+         } else {
+-            buttons[buildbut+4+i]->ChangeImage(structicons[i+structoff]);
++            strncpy(placename, structicons[i+structoff], 13);
++            placename[strlen(placename) - 8] = '\0';
++            queue = player->getBuildQueue(placename, 0);
++          
++            if(queue) {
++              queue->getStatus(placename, &num, &grayed, &stopped, &frozen, &ready, &angle);
++              buttons[buildbut+startbuildbutton+i]->setStatus(num, grayed, stopped, frozen, ready, angle);
++            }
++
++            buttons[buildbut+startbuildbutton+i]->ChangeImage(structicons[i+structoff]);
+         }
+     }
+ 
+     for (Sint8 x=buttons.size()-1;x>=0;--x) {
+-        dest = buttons[x]->getRect();
+-        if (sbar != NULL)
+-            SDL_FillRect(sbar,&dest,0x0);
+-        //SDL_SetClipRect(buttons[x]->getSurface(),&dest);
+-        SDL_BlitSurface(buttons[x]->getSurface(), NULL, sbar, &dest);
++       buttons[x]->blit(sbar);
+     }
+ }
+ 
+ void Sidebar::downbutton(Uint8 index)
+ {
+-    if (index>3)
+-        return; // not a scroll button
++    if (index>=startbuildbutton)
++        return; // not a scroll, repair, sell or map button
+ 
+     buttondown = index;
+-
++//    pc::sfxeng->queueSound("button.aud");
++ 
+     bd = true;
+-    if (index == 0 || index == 1)
++    switch (index) {
++    case 0:
++        buttons[index]->ChangeImage("repair.shp",1);
++        break;
++    case 1:
++        buttons[index]->ChangeImage("sell.shp",1);
++        break;  
++    case 2:
++        buttons[index]->ChangeImage("map.shp",1);
++        break;
++    case 3:
++        buttons[index]->ChangeImage("stripup.shp",1);
++        break;
++    case 4:
+         buttons[index]->ChangeImage("stripup.shp",1);
+-    else
++        break;
++    case 5:
++        buttons[index]->ChangeImage("stripdn.shp",1);
++        break;
++    case 6:
+         buttons[index]->ChangeImage("stripdn.shp",1);
++        break;
++    }
++
+     updateicons();
++}
+ 
++void Sidebar::redrawButton(void)
++{
++    buttons[0]->ChangeImage("repair.shp",0);
++    buttons[1]->ChangeImage("sell.shp",0);
++    buttons[2]->ChangeImage("map.shp",0);
++    if (bd) {
++      switch (buttondown) {
++        case 0:
++            buttons[buttondown]->ChangeImage("repair.shp",1);
++            break;
++        case 1:
++            buttons[buttondown]->ChangeImage("sell.shp",1);
++            break;
++        case 2:
++            buttons[buttondown]->ChangeImage("map.shp",1);
++            break;
++      }
++    }
++    updateicons();
+ }
+ 
+ void Sidebar::resetButton(void)
+@@ -503,10 +698,31 @@
+         return;
+     bd = false;
+ 
+-    if (buttondown < 2)
++    switch (buttondown) {
++    case 0:
++        buttons[buttondown]->ChangeImage("repair.shp",0);
++        break;
++    case 1:
++        buttons[buttondown]->ChangeImage("sell.shp",0);
++        break;
++    case 2:   
++        buttons[buttondown]->ChangeImage("map.shp",0);
++        break;
++    case 3:   
+         buttons[buttondown]->ChangeImage("stripup.shp",0);
+-    else
++        break;
++        buttons[buttondown]->ChangeImage("stripdn.shp",0);
++        break;
++    case 4:   
++        buttons[buttondown]->ChangeImage("stripup.shp",0);
++        break;
++    case 5:   
++        buttons[buttondown]->ChangeImage("stripdn.shp",0);
++        break;
++    case 6:   
+         buttons[buttondown]->ChangeImage("stripdn.shp",0);
++        break;
++    }
+     buttondown = 0;
+     updateicons();
+ }
+@@ -535,6 +751,11 @@
+     palnum = pal;
+     this->theatre = theatre;
+     ChangeImage(mixname);
++    grayed = false;
++    stopped = false;
++    ready = false;  
++    num = 0;
++    angle = 12.0;
+ }
+ 
+ void Sidebar::SidebarButton::ChangeImage(const char* fname)
+@@ -601,6 +822,112 @@
+     }
+ }
+ 
++void Sidebar::SidebarButton::blit(SDL_Surface *dest)
++{
++  SDL_Rect dst;
++  SDL_Surface *gr;
++  
++  if(!dest) return;
++
++  dst = picloc;
++  SDL_FillRect(dest, &dst, 0);
++  SDL_BlitSurface(pic, NULL, dest, &dst);
++
++  if(grayed) {
++  SDL_Surface *dummy;
++  SHPImage *tmpshp;
++  int scaleq = -1; 
++  Uint32 number;   
++  Uint16 x, y;     
++      try {
++          tmpshp = new SHPImage("clock.shp", scaleq);
++      } catch (ImageNotFound *e) {
++        return;
++      }    
++    
++    number = (Uint32)((angle * tmpshp->getNumImg()) / (M_PI * 2));
++    
++    if(number >= tmpshp->getNumImg())
++      number = tmpshp->getNumImg() - 1;
++    
++    tmpshp->getImage(number, &gr, &dummy, palnum);
++    SDL_FreeSurface(dummy);
++    delete tmpshp;
++
++    SDL_LockSurface(gr);
++    
++    // this should be done using palette tweaking :/
++    
++   if(gr->format->BytesPerPixel == 4) {
++      Uint32 *pixels = (Uint32 *)gr->pixels;
++      for(y = 0; y < gr->h; y++)
++        for(x = 0; x < gr->w; x++)
++          if(pixels[y * (gr->pitch >> 2) + x] == 0x0000a800)
++            pixels[y * (gr->pitch >> 2) + x] = 0x00010101;  
++    } else if(gr->format->BytesPerPixel == 2) {
++      Uint16 *pixels = (Uint16 *)gr->pixels;   
++      for(y = 0; y < gr->h; y++)
++        for(x = 0; x < gr->w; x++)
++          if(pixels[y * (gr->pitch >> 1) + x] == 0x0540)
++             pixels[y * (gr->pitch >> 1) + x] = 0x0021; 
++//      logger->gameMsg("%08x", pixels[y * (gr->pitch >> 1) + x]);
++      
++    } 
++      
++    SDL_UnlockSurface(gr);
++
++    SDL_SetAlpha(gr, SDL_SRCALPHA, 128);
++    dst = picloc;
++    
++    SDL_BlitSurface(gr, NULL, dest, &dst);
++    SDL_FreeSurface(gr);
++  }
++   
++  if(ready)
++    drawText(dest, "ready");
++  else if(stopped)
++    drawText(dest, "stopped");
++  
++  drawNumber(dest);
++}
++ 
++void Sidebar::SidebarButton::setStatus(Uint8 num, bool grayed, bool stopped, bool frozen, bool ready, double angle)
++{
++  this->num = num;
++  this->grayed = grayed;
++  this->stopped = stopped;
++  this->frozen = frozen;
++  this->ready = ready;
++  this->angle = angle;
++}
++ 
++ 
++ 
++void Sidebar::SidebarButton::drawText(SDL_Surface *dest, const char *s)
++{
++  Sint32 x, y;
++  
++  x = picloc.x + ((picloc.w - pc::sidebar->getFont()->calcStringWidth(s)) >> 1);
++//  y = picloc.y + picloc.h - 10;
++  y = picloc.y + picloc.h - 30;
++  pc::sidebar->getFont()->drawString(s, dest, x, y);
++}
++ 
++void Sidebar::SidebarButton::drawNumber(SDL_Surface *dest)
++{
++  Sint32 x, y;
++  char numbuf[10];
++  
++  if(num == 0) return;
++  
++  sprintf(numbuf, "%u", num);
++  
++  x = picloc.x + 3;
++  y = picloc.y + 3;
++  pc::sidebar->getFont()->drawString(numbuf, dest, x, y);
++}
++ 
++
+ Sidebar::SidebarButton::~SidebarButton()
+ {
+ }
+@@ -629,7 +956,6 @@
+ void Sidebar::RadarAnimEvent::run()
+ {
+     SDL_Rect dest;
+-    SDL_Surface *shadow;
+     SHPImage* tmpshp;
+ 
+     if (frame <= framend) {
+@@ -643,11 +969,12 @@
+         SDL_FillRect(pc::sidebar->radarlogo, &dest, SDL_MapRGB(pc::sidebar->sbar->format, 0x0a, 0x0a, 0x0a));
+         SDL_BlitSurface( pc::sidebar->radarlogo, NULL, pc::sidebar->sbar, &dest);
+ 
+-        tmpshp->getImage(frame, &(pc::sidebar->radarlogo), &shadow, 0);
++        tmpshp->getImage(frame, &(pc::sidebar->radarlogo), 0, 0);
+         SDL_BlitSurface( pc::sidebar->radarlogo, NULL, pc::sidebar->sbar, &dest);
+ 
+-        SDL_FreeSurface(shadow);
+         delete tmpshp;
++        pc::sidebar->redrawButton();
++
+         ++frame;
+         p::aequeue->scheduleEvent(this);
+     } else {
+@@ -658,17 +985,28 @@
+ 
+         if (mode == 1) {
+             tmpshp = new SHPImage(pc::sidebar->radarname, pc::sidebar->scaleq);
+-            tmpshp->getImage(0, &(pc::sidebar->radarlogo), &shadow, 0);
++            SDL_FillRect(pc::sidebar->radarlogo, &dest, SDL_MapRGB(pc::sidebar->sbar->format, 0x0a, 0x0a, 0x0a));
++            SDL_BlitSurface( pc::sidebar->radarlogo, NULL, pc::sidebar->sbar, &dest);
++            tmpshp->getImage(0, &(pc::sidebar->radarlogo), 0, 0);
+             SDL_BlitSurface( pc::sidebar->radarlogo, NULL, pc::sidebar->sbar, &dest);
+-            SDL_FreeSurface(shadow);
+             delete tmpshp;
++            pc::sidebar->redrawButton();
+             pc::sidebar->radaranim = NULL;
+         } else {
+-            SDL_FillRect(pc::sidebar->radarlogo, &dest, SDL_MapRGB(pc::sidebar->sbar->format, 0x0a, 0x0a, 0x0a));
+-            SDL_BlitSurface( pc::sidebar->radarlogo, NULL, pc::sidebar->sbar, &dest);
++            tmpshp = new SHPImage(pc::sidebar->radarback, pc::sidebar->scaleq);
++            SDL_FillRect(pc::sidebar->radarbg, &dest, SDL_MapRGB(pc::sidebar->sbar->format, 0x0a, 0x0a, 0x0a));
++            SDL_BlitSurface( pc::sidebar->radarbg, NULL, pc::sidebar->sbar, &dest);
++
++            tmpshp->getImage(1, &(pc::sidebar->radarbg), 0, 0);
++            SDL_BlitSurface( pc::sidebar->radarbg, NULL, pc::sidebar->sbar, &dest);
++
++            delete tmpshp;
++            pc::sidebar->redrawButton();
++
+             *minienable = true;
+             pc::sidebar->radaranim = NULL;
+         }
++
+         pc::sidebar->radaranimating = false;
+         delete this;
+         return;
+diff -Naur ./vfs/vfs.cpp ./vfs/vfs.cpp
+--- ./vfs/vfs.cpp	2003-12-15 19:48:43.000000000 +0100
++++ ./vfs/vfs.cpp	2004-01-13 22:57:11.000000000 +0100
+@@ -40,6 +40,8 @@
+ void VFS_Init(const char* binpath)
+ {
+     INIFile *filesini;
++    INIFile *generalini;
++    INIKey key;
+     string tempstr;
+     Uint32 keynum;
+ 
+@@ -50,12 +52,25 @@
+     }
+     tempstr = binpath; tempstr += "/";
+     externals->loadArchive(tempstr.c_str());
+-    externals->loadArchive("conf/");
+-#if defined _WIN32
+-#elif defined(macintosh)
+-#else
+-    externals->loadArchive("/etc/freecnc/");
+-#endif
++
++    try {
++        generalini = new INIFile("conf/general.ini");
++    } catch(int) {
++        logger->error("Unable to locate general.ini.\n");
++        return;
++    }
++
++    // TODO: Try all specified gamedirs (atm: try first)
++    key = generalini->readIndexedKeyValue("GENERAL",1,"GAME");
++    logger->note("Trying to load \"%s\"...\n",key->second.c_str());
++    string gamedir = "conf/";
++    gamedir += key->second;
++    if (gamedir[gamedir.length()-1] != '/' &&
++        gamedir[gamedir.length()-1] != '\\') {
++        gamedir += "/";
++    }
++    externals->loadArchive(gamedir.c_str());
++    delete generalini;
+ 
+     try {
+         filesini = new INIFile("files.ini");
+@@ -63,73 +78,55 @@
+         logger->error("Unable to locate files.ini.\n");
+         return;
+     }
+-    for (Uint32 pathnum = 1;;++pathnum) {
+-        INIKey key;
+-        try {
+-            key = filesini->readIndexedKeyValue("GENERAL",pathnum,"PATH");
+-        } catch(int) {
+-            break;
+-        }
+-        string defpath = key->second;
+-        if (defpath[defpath.length()-1] != '/' &&
+-            defpath[defpath.length()-1] != '\\') {
+-            defpath += "/";
+-        }
+-        externals->loadArchive(defpath.c_str());
+-    }
+-    for (Uint32 gamenum = 1 ;; ++gamenum) {
+-        INIKey key;
+-        plugins = new VFSPlugMan(binpath);
+-        try {
+-            key = filesini->readIndexedKeyValue("GENERAL",gamenum,"GAME");
+-        } catch(int) {
+-            break;
+-        }
+-        logger->note("Trying to load \"%s\"...\n",key->second.c_str());
+-        try {
+-            // First check we have all the required mixfiles.
+-            for (keynum = 1; ;keynum++) {
+-                INIKey key2;
+-                try {
+-                    key2 = filesini->readIndexedKeyValue(key->second.c_str(),keynum,
+-                            "REQUIRED");
+-                } catch(int) {
+-                    break;
+-                }
+-                if( !plugins->loadArchive(key2->second.c_str()) ) {
+-                    logger->warning("Missing required file \"%s\"\n",
+-                            key2->second.c_str());
+-                    throw 0;
+-                }
+ 
+-            }
+-        } catch(int) {
+-            delete plugins;
+-            continue;
+-        }
+-        // Now load as many of the optional mixfiles as we can.
++    // Load the mix directory
++    string mixdir = gamedir;
++    mixdir += "mix/";
++    externals->loadArchive(mixdir.c_str());
++
++    plugins = new VFSPlugMan(binpath);
++    try {
++        // First check we have all the required mixfiles.
+         for (keynum = 1; ;keynum++) {
+             INIKey key2;
+             try {
+-                key2 = filesini->readIndexedKeyValue(key->second.c_str(),keynum,
+-                        "OPTIONAL");
++                key2 = filesini->readIndexedKeyValue("FILES",keynum,
++                        "REQUIRED");
+             } catch(int) {
+                 break;
+             }
+-            plugins->loadArchive(key2->second.c_str());
++            if( !plugins->loadArchive(key2->second.c_str()) ) {
++                logger->warning("Missing required file \"%s\"\n",
++                        key2->second.c_str());
++                throw 0;
++            }
++
+         }
++    } catch(int) {
++        delete plugins;
+         delete filesini;
+-        return;
++        logger->error("Unable to find mixes for any of the supported games!\n"
++            "Check your configuration and try again.\n");
++        #ifdef _WIN32
++        MessageBox(0,"Unable to find mixes for any of the supported games!\n"
++            "Check your configuration and try again.","Error",0);
++        #endif
++        exit(1);
+     }
+ 
++    // Now load as many of the optional mixfiles as we can.
++    for (keynum = 1; ;keynum++) {
++        INIKey key2;
++        try {
++            key2 = filesini->readIndexedKeyValue("FILES",keynum,
++                    "OPTIONAL");
++        } catch(int) {
++            break;
++        }
++        plugins->loadArchive(key2->second.c_str());
++    }
+     delete filesini;
+-    logger->error("Unable to find mixes for any of the supported games!\n"
+-                  "Check your configuration and try again.\n");
+-#ifdef _WIN32
+-    MessageBox(0,"Unable to find mixes for any of the supported games!\n"
+-                 "Check your configuration and try again.","Error",0);
+-#endif
+-    exit(1);
++    return;
+ }
+ 
+ void VFS_Destroy()
+diff -Naur ./video/graphicsengine.cpp ./video/graphicsengine.cpp
+--- ./video/graphicsengine.cpp	2003-12-18 14:31:26.000000000 +0100
++++ ./video/graphicsengine.cpp	2004-01-29 14:36:11.000000000 +0100
+@@ -119,10 +119,14 @@
+     }
+     /* this is a new game so clear the scren */
+     clearScreen();
+-    p::ccmap->prepMiniClip(pc::sidebar->getTabLocation()->w,pc::sidebar->getTabLocation()->h);
+-    minizoom.normal = (tilewidth*pc::sidebar->getTabLocation()->w)/max(maparea.w, maparea.h);
+-    minizoom.max    = max(1,tilewidth*pc::sidebar->getTabLocation()->w / max(
+-                p::ccmap->getWidth()*tilewidth, p::ccmap->getHeight()*tilewidth));
++//    p::ccmap->prepMiniClip(pc::sidebar->getTabLocation()->w,pc::sidebar->getTabLocation()->h);
++//    minizoom.normal = (tilewidth*pc::sidebar->getTabLocation()->w)/max(maparea.w, maparea.h);
++//    minizoom.max    = max(1,tilewidth*pc::sidebar->getTabLocation()->w / max(
++//                p::ccmap->getWidth()*tilewidth, p::ccmap->getHeight()*tilewidth));
++    Uint8 minisize=120;
++    p::ccmap->prepMiniClip(minisize,minisize);
++    minizoom.normal = (tilewidth*minisize)/max(maparea.w, maparea.h);
++    minizoom.max    = max(1,minisize / max(p::ccmap->getWidth(), p::ccmap->getHeight()));
+     mz = &minizoom.normal;
+     playercolours.resize(SHPBase::numPalettes());
+     for (Uint8 i = 0; i < playercolours.size() ; ++i) {
+@@ -132,6 +136,12 @@
+     }
+ }
+ 
++void GraphicsEngine::switchMiniZoom()
++{
++    if (*mz==minizoom.normal) mz=&minizoom.max;
++    else mz=&minizoom.normal;
++}
++
+ void GraphicsEngine::clipToMaparea(SDL_Rect *dest)
+ {
+     if (dest->x < maparea.x) {
+@@ -651,7 +661,9 @@
+     //   dest.x = mx;
+     //   dest.y = my;
+     // Draw messages
++//Uint16 ticks=SDL_GetTicks();
+     curimg = pc::msg->getMessages();
++//logger->gameMsg("  MESSAGES: %i",SDL_GetTicks()-ticks);
+     if (curimg != NULL) {
+         dest.x = maparea.x;
+         dest.y = maparea.y;
+diff -Naur ./video/message.cpp ./video/message.cpp
+--- ./video/message.cpp	2003-12-15 20:42:40.000000000 +0100
++++ ./video/message.cpp	2004-01-13 22:56:32.000000000 +0100
+@@ -2,6 +2,7 @@
+ #include "common.h"
+ #include "font.h"
+ #include "message.h"
++#include "logger.h"
+ 
+ MessagePool *MessagePool::currentInstance;
+ 

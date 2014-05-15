@@ -1,0 +1,166 @@
+EVENTS
+======
+
+This is a try to organize events. Those are not states but events (instant)
+
+
+sidebar (side_click or auto event)
+        side_add (start building)
+	side_stop
+	side_resume
+	side_remove (cancel/sell)
+        side_ready (stopped too?: special weapon, unit not able to unit_start_build)
+	side_finished (decrease queue)
+
+build unit (and structure) events
+	build_start (place unit, begin animation, para troops start landing)
+	build_end (after build_start, deploywith, para troops landed)
+
+damaged unit/struct (dmg_hit event or sthg else)
+        dmg_ok (default, if repaired from unit_damagedx)
+	dmg_state1 (change visual)
+        dmg_state2 (change visual)
+        dmg_destroyed (not only the visual stuff changes ;)
+
+movement (mov_order or fire_order, auto event)
+	mov_turning
+	mov_start
+        mov_stopped
+	mov_over (start to smash infantry)
+
+fire
+	fire_charge (e.g. tesla, otherwise: immediately followed by fire_start)
+	fire_start (after fire_charge)
+
+air
+	air_start_toair
+	air_end_toair
+	air_start_toland
+	air_end_toland
+
+special (e.g. chronos or other special weapons)
+	special_init_start
+	special_init_end
+	special_finish_start
+	special_finish_end
+
+Events can be queued (e.g. fire event is just executed if legality is reached:
+insert turn/mov request if not legal).
+All events should be checked for legality (e.g. side_add can just be done if the
+appropriate buildings exist and if there's enough money).
+Each event may strongly depend on used weapon/whatever....
+
+
+
+Some ideas about game internals (depending on game)
+===================================================
+
+- fxed numerated forces, example:
+    o allied (0)
+    o soviet (1)
+    o civilian (2)
+
+- behaviour of forces in game???
+    o PS_GOOD
+    o PS_BAD
+    o PS_NEUTRAL
+    o PS_SPECIAL
+    o PS_MULTI    
+
+- fixed numerated unittype
+    o inf: infantry (0)
+    o lan: tanks (1)
+    o sea: ships and subs (2)
+    o air: air (3)
+    o special (4)
+
+- "movement types" flags (or fixed)
+    o foot (default for inf) 
+    o track 
+    o wheel (default for lan?)
+    o float (default for sea)
+    o I thought flags as a sea unit might be able to pass land too
+      (hoovercraft).
+    o What about moving sound depending on movement type (if there exist
+      multiple)? In this case it would be a changable type in game... ;)
+    o I think it's too complicated, atm those types are just used for land
+      characteristics...
+
+- fixed numerated land types
+    o clear (default: 0)
+    o water (1)
+    o road (2)
+    o rock (3)
+    o tree (4)
+    o river (5)
+    o rough (6)
+    o wall (7)
+    o beach (8)
+    o ore (9)
+    o 4,7 and 9 are either not used or special
+
+- fixed land characteristics depending on movement type/land type
+    o hmm, ok this is the reason for _fixed_ movement types ;)
+    o Idea: choose maximum and/or first in list if there are multiple
+            possibilities (e.g. go through all foot/track/wheel/float units
+            and just change if the new value is bigger)
+    o foot_land_char[10]
+    o track_land_char[10]
+    o wheel_land_char[10]
+    o float_land_char[10]
+    o struct_land_char[10] (Type: boolean for buildable)
+    o To be transfered to all units (those should be threated as meta
+      informations IMO)
+    o Type: integers from 0 to 100? (Percent)
+
+- fixed primary structures (names) depending on side/unit type
+    o inf_prim[NUM_FORCES]
+    o lan_prim[NUM_FORCES]
+    o sea_prim[NUM_FORCES]
+    o air_prim[NUM_FORCES] 
+    o Example:
+        num list: allied, soviet, civilian
+        inf_prim[allied]=tent;
+        inf_prim[soviet]=barr;
+    o Used for getcorrectprimary, building queue, more?
+
+- fixed numerated animation types
+    o none (default, 0)
+    o loop (1)
+    o once (2)
+    o turret/unit (assuming that it starts vs north and turns counter
+      clockwise, 3)
+
+-fixed numerated situation triggers and states
+    o Triggers may invoke immediate state changes and queued (not immediate)
+      animation/sound changes
+    o build_struct (trigger)
+    o build_finished (trigger)
+    o state[MAX_STATE] (state)
+???? not this way
+        for structures: ok (default), damaged, severly damaged, destroyed, special1, ...
+        for units:      ready (default), loading, charging, fireing, special1, ...
+    o state_trig[MAX_STATE] (same, but trigger)
+    o Special may be landing, starting, chronosphere, etc
+
+- fixed animation data for a unit/structure
+    o trigger (for each trigger the following are specified => animation matrix)
+    o start_nr
+    o end_nr
+    o anim_type
+    o layer
+    o Example:
+        build_start={32,63,unit,0}
+        build_start={32,63,unit,0}
+        
+- special sound names, image names
+    o If several names are specified it should be choosed randomly (like
+      talkback)
+    o Unspecified => empty or ignored (often the case as TD does not have
+      a sound for every sound in RA)
+    o Example: "unit_ready=uready1.aud,uready2.aud"
+
+- some complicated game specific settings that may want to be handled
+  outside the source...
+
+- more...

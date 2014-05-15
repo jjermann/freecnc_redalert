@@ -1,0 +1,80 @@
+Next release:
+0.2.1 (2003-??-??)
+* Vastly improved INI file and talkback parsing.
+* Portability fixes for platforms unable to be tested before the
+  release of 0.2.0.
+* New scaling code that can render VQAs as large as possible, as
+  well as rendering in them using either interlacing, standard pixel
+  copying (like the previous scaler) or linear interpolation (requires
+  very high end processor).
+* New scrolling code: scrolling is much smoother.  Dragging the mouse
+  while holding down the right mouse button will scroll the map.
+  Mouse wheel scrolls the sidebar.
+* Fog of war has smoother edges.
+* Easier to click on moving enemy infantry.
+* Compile fixes for the tools and when using optimisations.
+* Minimap now has some radar capabilities.
+* Some internal code cleanup.
+
+Previous releases:
+
+0.2.0 (2002-08-02)
+* New plugin based VFS, now supports tgz and mix files.
+* Fog of war.
+* Game messages are logged.
+* Loading screen.
+* More building rules: prerequisite and proximity checks.
+* Map bookmarking.
+* Selection storing.
+* Several bugfixes.
+
+0.2.0-tp2 (2002-02-14)
+* Flame thrower and chemical thrower units can fire.
+* Walls can be attacked.
+* AI (in early stages of development).
+* Health bars work (and change colour).
+* Units and structures have armour (affects the effectiveness of
+  weapons).
+* Units and structures can now force attack (replaces control-clicking
+  to apply 25 points of damage).
+* When you either complete or fail a mission you are told by EVA and a
+  message appears at the top (amongst the other messages).
+
+0.2.0-tp1 (2001-10-05)
+ * You can attack with most units and structures (that you should be
+   able to).  Currently:
+ Rifle infantry, Rocket infantry, Commando (no C4 effect yet), Light,
+ Medium, Mammoth and Stealth tanks, NOD Buggy, Humvee, NOD Bike, APC,
+ Normal and Advanced Guard towers and NOD Turrets.
+
+ * Better VQA decoding.
+
+ * New file-handling code.  This can handle external files
+   transparently. (see below)
+
+ * External song lists.  See songs.ini for more information.  Because
+   the file handling code can transparently load external files, you
+   can use the music from "Tiberian Sun" or either "Red Alert" as long
+   as you've extracted the AUDs into somewhere that is searched by
+   freecnc
+
+ * Minimap
+
+ * -nosound command line option to disable sound
+
+0.1.0     (2001-07-28)
+- Back from a lengthy hiatus
+- Complete rewrite in C++
+
+0.0.3     (2000-09-07)
+ (No longer available)
+
+0.0.2     (2000-08-13)
+ (No longer available)
+
+0.0.1     (2000-07-29)
+ (No longer available)
+
+0.0.0     (2000-07-17)
+ (No longer available)
+

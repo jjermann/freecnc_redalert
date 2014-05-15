@@ -1,0 +1,69 @@
+Unit and Structure related types in a unit's life
+=================================================
+
+
+BUILDING queues (What can I build simultaneous?):
+  - strqueue
+  - infqueue
+  - tnkqueue
+  - shpqueue
+  - airqueue
+  - sprqueue (no money, no stop, etc...)
+
+PRODUCTION buildings (where do built units come out? Maybe this could
+        be use as return value (0,1,2) for "createmode" <- I would rename that...):
+  - structure (0)
+      - allied struct (allied FACT)
+      - soviet struct (soviet FACT)
+  - unit (1)
+      - dogs (KENN)
+      - allied infantry (TENT)
+      - soviet infantry (BARR)
+      - tanks (WEAP)
+      - ships (SYRD)
+      - subs (SPEN)
+      - planes (AFLD)
+      - helis (HPAD)
+  - superweapon (2: special)
+
+UNITTYPE (How do I handle those units internaly? Like starting, landing,
+        turn anims, chronoshift, etc...):
+  - infantry
+  - tanks
+  - ships
+  - subs (they behave different than ships, e.g. come out of watter)
+  - planes
+  - helis
+
+TERRAIN types (What sort of land is this?)
+  - clear
+  - water
+  - road
+  - rock
+  - tree (?)
+  - river
+  - rough
+  - wall (?)
+  - beach
+  - ore (?)
+
+MOVEMENT (wheel) types (How do the different units move on a certain land
+        type? Can they crush infantry (unittype)? Can they go over water?
+        Can they pass rough terrain? affects default movement cost...):
+  - none (default for structure)
+  - none_water (for spen, syrd?)
+  - foot (default for infantry)
+  - track
+  - wheel (default for tanks?)
+  - float (default for sea)
+  - hoover?
+
+MOVEMENT cost (Where should I walk through? There are two parts: First the
+        property of a certain type to move on terrain xy and a more AI
+        depending setting (not unit/terrain property). But to simplify stuff
+        they can maybe be combined together without further problems.
+        Defaults (actually almost only the defaults should exist depend on
+        terrain type and movement types...):
+  - default for clear terrain for each movement type
+  - ...
+  - default for ore terrain for each movement type

@@ -1,0 +1,66 @@
+Hierarchy
+=========
+
+- All game specific stuff should be moved into the specific game dir in conf/.
+- I would keep the game type option (in internal.ini) as there really is a
+  fundamental difference between TD and RA sometimes. Maybe type 3 can be
+  added for RA2. ;)
+
+
+conf/
+    RedAlert/
+        mix/ (all RedAlert mix files)
+        setup.ini (from freecnc.ini, files.ini, songs.ini)
+            - command line default game specific options (map..)
+            - files to load
+            - playlist (default from songs.ini)
+            [ - overrides freecnc.ini options (e.g. one might want to change
+                the resolution specificly for RedAlert, donno) ]
+	internal.ini (not to be changed by user):
+            - game type specification
+            - buildable_radius?
+            - explosion sound/image, nothing if unspecified
+	cursors.ini
+        art.ini (move to structure.ini?)
+        structure.ini
+        talkback.ini
+        templates.ini
+        unit.ini
+        weapons.ini
+        wsa.ini
+    RedAlertDemo/
+        similar...
+    TiberianDawn/
+        similar...
+    TiberianDawnGold/
+        similar...
+    TiberianDawnDemo/
+        similar...
+    freecnc.ini (from freecnc.ini):
+        - game to play (tries the specified dirs)
+	- command line default options (width/res/intro)
+
+
+Loading (donno?)
+=======
+
+1. Find game dir
+----------------
+CLI_LOAD:   check command line option for game
+              if found => MIX_CHECK for specified game dir
+              if true => set game dir
+
+INI_LOAD:   check freecnc.ini for game names
+              if found => MIX_CHECK for each game dir
+              if true => set game dir
+
+MIX_CHECK:  check existence of files specified in setup.ini
+
+
+2. Load options
+---------------
+parse freecnc.ini, setup.ini, command line
+
+
+3. Load Mixes, start game
+-------------------------

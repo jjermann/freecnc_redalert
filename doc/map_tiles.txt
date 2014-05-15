@@ -1,0 +1,139 @@
+MAP
+===
+
+The map would consist of:
+  - "a set of ordered tiles" (for each coordinate/pos). The tiles have a certain
+    tile type specified in some config files (outside the map).
+  - "a set of trigger region names the coordinate is a member off"
+    (for each coordinate/pos)
+  - triggers specified before in some sort of scripting language
+  - general settings (maps should be able to overwrite/change unit and other
+    properties (e.g. certain aftermath/RedAlert mission change unit settings
+    for certain maps)
+  - campaign infos?
+
+
+
+TILES
+=====
+
+Maybe the name tile is a bit confusing/wrong. I actually used it for a
+basic 24x24 image. But for the game the image is not important, all it
+should know for how to handle a tile is what type it is (of course the name
+should be "queryable" too, but I speak about the properties of tiles now).
+So one needs to specify the type for each tile.
+
+Units and buildings already have their type, which is either unit/building
+or more specific like infantry,tank,ship,sub,heli,plain,etc.
+The other tiles have one of the below types (e.g. Clear, Ore):
+
+I call a coordinate a (x,y) value of a map position (or pos=x+y*width).
+A coordinate contains tiles (ordered: there is a top and bottom (basic) tile)
+and an information about trigger regions it belongs too.
+
+
+Basic tiles:
+------------
+
+Clear (default)
+  - smudge damage
+Water
+  - nothing
+Road (is this really basic or on top of clear?)
+  - smudge damage
+[ - destroyable?
+  - buildable? (=> then it would be extended) ]
+Rock
+  - nothing
+River
+  - nothing
+Rough
+  - nothing
+Beach
+  - smudge damage
+
+
+Extended tiles:
+---------------
+Every extended tiles lies on a basic tile, for certain extended tiles were
+originally basic tiles (bridge tile), we just set a default tile then (river).
+
+Mine
+  - changes surrounding tiles if possible after some time has ellapsed (ore
+    growth)
+Ore
+  - ore count == damage?
+Tree (?)
+  - burn damage?
+  - destroyable
+Bridge (only one tile of the bridge)
+  - basic tile: river
+  - smudge damage
+  - destroyable? repairable? (rather not as we would need to have sthg like
+    bridge_not_destroyed and bridge_destroyed for land units and sea units)
+  - changes surrounding tiles if destroyed/damaged
+Dungeon (basic tile?)
+  - change: not passable by air units
+  - change: image gets a shadow alpha map (looks darker)
+
+
+Everything is a tile? (as in "Everything is a set." ;)
+-------------------------------------------------------
+[ Maybe tiles shouldn't be able to move (unit, weapon).
+  On the other hand we'd like to threat certain tiles like buildings
+  (bridge tiles) etc. ]
+
+Unit (infantry, tank, ship, subs, plain, heli)
+Building
+Weapon (e.g. land mine, v2, etc)
+REST (ice cap, crates, wall???)
+
+
+
+Mixed notes:
+------------
+
+The order of the tiles specifies what should be drawn first (of course).
+So one might want to create a function that inserts a tile at specific
+coordinate. Most time time it will be inserted on top. Same thing for
+removing...
+
+Depending on the damage we have different actions. Examples:
+  - bigger smudge marks for damaged smudge tiles...
+  - Ore changes image if the "health" is lower (up to 4 times) and vannishes
+    at the end (destroyed)
+  - Same for tree
+  - Bridge changes the images of itself and the tiles around it
+    if destroyed...
+
+Maybe it's really better to base the movement speed on the tile. The basic
+tile then have a fixed movement value (percentage) for a wheel type:
+  building
+  water building,
+  foot (default infantry)
+  track
+  wheel (default tanks)
+  float (default ship, subs)
+  air (default plain, heli) 
+
+The extended tiles may either modify the value or set it (*0.9, =0, -30?).
+
+Certain tiles may create trigger regions around them automatically (example:
+the bridge tile might want to create a numbered __bridge_xy region around
+itself).
+
+The map should contain the trigger information too of course (in some
+scripting language).
+
+A unit should be able to attack any tile, not just units/buildings.
+If a weapon has spread dammage it will inflict surrounding tiles too for
+example. Or: There might be a mine hidden in the tile.
+
+Units normaly are below trees/etc, but this should be changeable in some way
+as air units fly over trees.
+
+This design should allow multiple units/buildings on one coordinate (I
+think).
+
+
+Ok, I can't write drafts. But it might give some ideas at least... ;)

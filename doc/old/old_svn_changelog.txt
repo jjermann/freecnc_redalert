@@ -1,0 +1,155 @@
+New stuff:
+==========
+
+- Wrote conf/ again for RedAlert/aftermath, some stuff is very similar to TD
+  (weapons.ini) but it's still too much to keep both together. We _need_ a new
+  config loading system (explained below)!
+
+- added unmix to extract all files in a mix file
+  [tools/unmix]
+
+- added some tools to convert original ini files to freecnc ini files
+
+- building queue, used smoln's patch, improved it a lot (BIG!!!)
+  [basically sidebar.cpp, input.cpp, playerpool.cpp]
+
+- RA maps are somehow not initialized correctly => added:
+  [loadmap.cpp]
+  +// @TODO: Fix multiplayer map loading (at the moment it returns 1 all the time)
+  +//    p::uspool->preloadUnitAndStructures(missionData.buildlevel);
+  +    p::uspool->preloadUnitAndStructures(98);
+  +    p::uspool->generateProductionGroups();
+
+- config system:
+  [vfs.cpp]
+  It first loads a general dir specified in general.ini and then loads all
+  ini files in that dir. This way you don't need to do "if RA load
+  raunit.ini else... ". It should be cleaned up and changed to allow
+  overwrite. Example: It should be possible to have
+  RedAlert/(all RA ini files) and RedAlertAM/(only updates of Aftermath)
+  Additionaly maps should be able to overwrite settings again...
+
+- wheel type (check the tech docs too!)
+  [structure.cpp, unit.cpp]
+  added a wheel types and set the defaults according to the unit type (but
+  it can be changed in the ini files). Each wheel type has a movement vector
+  (=> a matrix in the end) that sets the percentage of the general speed on
+  a specific terrain type (e.g. 100 for street, sthg low on rough terrain).
+
+- tried to change the movement code using the movement cost matrix explained
+  before. I failed but at least the buildings are now _placed_ correctly. The
+  path/walk code must still be changed and additionaly it somehow became buggy
+  (the units move strange).
+  [map.cpp, path.cpp]
+
+- The damage offset is somehow wrong for RedAlert or wrong in general (the
+  buildings don't look damaged if critically damaged). I changed the dmgoff
+  (+1) and it works. But I was told that now TD  doesn't work, so we either
+  make "if RA else" or find out why it didn't work...
+  [structureanim.cpp]
+
+- new unit creation code (already in cvs, but it changed)
+  [input.cpp, playerpool.cpp]
+  checks for correct primary (using production groups, etc), gets a free pos
+  and places the unit at this position (otherwise set the unit to ready in
+  the sidebar and wait). The edge cases aren't handled neither...
+
+  This is nice but should be improved in future,
+  there should be an exit cell where the unit is placed (e.g. the cell is
+  inside the building in the WEAP case), then an animation should be run (open
+  the door) and the unit should have the order to move to a corresponding
+  gathering place. Now it's easy to check whether we can place a unit, we just
+  check if the exit cell has still a unit on it...
+
+  The difference to cvs is: We use buildings queues, so all of this goes to
+  playerpool.cpp (originally input.cpp)...
+
+- added/changed some more unit/buidling properties (loopend1/2, image,
+  movetype (=wheeltype), moved unittype onto top). (already partially in cvs)
+  [unit.cpp, structure.cpp]
+
+- turn code: most of it is already in cvs (unitanim)
+  [unitanimations.cpp, structureanims.cpp]
+  the attack stuff was somehow wrong so I there are some _updates_ to the
+  changes in cvs. Additionaly the buildings stuff might have had some changes
+  too (the building turn code (turret) wasn't touched in cvs)...
+  Explanation: Before it was hardcoded that a unit had 16 direction images,
+  I changed that and queried the loopend value as a replacement for 16,
+  otherwise air units and other won't work...
+
+- spread damage
+  [weaponspool.cpp, projectileanim.cpp]
+  I change inaccurate to spread (percentage value from 0 to 100), it works
+  this way (D=dmg, q=spread/100, q < 1):
+  x		target cell, damage=D
+
+  xxx		1st level surrounding cells
+  x x		damage=D*q for each cell
+  xxx
+
+  xxxxx         2nd level surrounding cells
+  x   x		damage=D*q^2
+  x   x
+  x   x
+  xxxxx
+
+  etc... till damage<=1 (then it stops). For buildings I made a list. If a
+  buildings gets hit it's added to the list. If it would be hit again but it's
+  already in the list, it won't be hit (otherwise the buildings is hit several
+  times). I didn't free anything, maybe here's a leak, then: The code
+  doesn't check if the position is ok, it might cause problems at the map
+  edges...
+
+- selection
+  [cursor.ini, selection.cpp, cursor.cpp]
+  Added legalMove and targetinRange, this checks if a target is in fire
+  range and changes the cursor accordingly.
+
+- sounds/images
+  changed/added corresponding sounds/images for RedAlert all over the place.
+  This should be handled through internal.ini (all hardcoded names should be
+  specified there) so we won't need those ugly "if RA else"...
+
+- sidebar, with some help of nap's patch (BIG)
+  [input.cpp, sidebar.cpp]
+  I almost implemented a complete support for the RedAlert sidebar. The
+  buttoms (repair, sell, map) are there but not yet handled properly (sell
+  won't play an animation and won't give money, repair acts immediately and
+  doesn't cost money). Repair should be made an Event, like in the buildingqueue...
+  The map should work properly, maybe the dimensions need to be tweaked and
+  it's probably wrong for Tiberian Dawn. The powerbar is missing too.
+
+  This change involved unit icons/etc and radar (partially cvs) too!
+
+  All the changes were done for RedAlert only, so we need either a complete
+  support or again if/else cases...
+
+- small changes:
+  changed the includes of course ;)
+  added some needed or not needed header files
+  commented out some warning/error messages [unitandstructurepool.cpp, ?]
+  change placename to bname
+
+
+Old stuff:
+==========
+
+- get deploy was dropped, it should be handled in a better way
+  [structureanims.cpp, structure.cpp]
+
+- superweapons were dropped, it should be handled in a better way
+  [ini files, input.cpp]
+
+- getFreePos was added to cvs
+
+- setPrimary stuff was added to cvs
+
+- turn code was partially added (as mentioned before)
+
+- production groups are somehow very buggy (??)
+
+- some unit/building properties (loopend, image) are already in cvs
+
+- the new unit creation code is already in cvs
+
+- some radar changes are in cvs and I think RA icon code too (not sure)

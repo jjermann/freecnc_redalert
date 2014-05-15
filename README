@@ -1,0 +1,199 @@
+FreeCNC v0.2.1-CVS README - Last Modified 2003-10-01
+----------------------------------------------------
+
+Contents:
+Disclaimer
+Installation
+Running
+INI file overview
+Controls
+New features from 0.2.0
+Demo versions
+Known bugs
+
+Disclaimer
+==========
+
+FreeCNC is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+Installation
+============
+    * See INSTALL file for installation details
+
+Running
+=======
+    * Type './freecnc' to run FreeCNC
+    * Type './freecnc --help' to see the various command line arguments.
+
+    * You also can use the FreeCNC Launcher Tools of your platform.
+      Switch to the /tools/Launcher/ directory and choose your platform. Follow
+      the instructions in the README of that directory.
+
+Selecting other maps
+====================
+The naming scheme used by Westwood for their single player maps is
+roughly:
+
+SC[GB][0-9][0-9][WE][ABC]
+
+Examples: SCB01EA (first NOD mission), SCG15EB (one of the final GDI
+missions), SCB13EC (one of the final NOD missions).
+Higher map numbers are used for the Covert Operations missions.
+
+Mulitplayer maps have 'M' instead of G or B.
+
+Red Alert maps are similar, but with of SCU instead of SCB for the
+Soviets.
+
+FreeCNC is able to load maps that do not conform to this naming scheme
+(useful for organising collections of custom maps).
+
+Controls
+========
+Click your units with the mouse and click somewhere else on the map to
+move them.  Right click to unselect all units, and you can also left
+click and drag to select groups of units.  Shift (left) clicking units
+will add them to your selection, as will holding down shift while
+dragging a box around more units.  Shift clicking units that are
+already selected to unselect them.
+
+Map locations can be bookmarked: hold down control and press a
+function key between F1 and F5 (inclusive) to store a location, then
+press that function key to return to that location in the map.  Each
+bookmark defaults to the top left corner of the map.
+
+Selections can also be stored: hold down control and press any number
+key to store your current selection in that slot.  Press that number
+again later to retrieve that selection.  There is no restriction on
+units or structures being exclusively in at most one stored selection.
+
+Other controls in FreeCNC v0.2.1-CVS:
+
+* 'v' reveals the whole map.
+* 'c' lets you build on any clear terrain, regardless of proximity.
+* 'b' makes all units and structures available to be built.  This is
+  used primarily for debugging.
+* Holding down the right mouse button and dragging will also scroll
+  the map.  The further you move the mouse, the faster the scroll.
+* The mouse wheel can be used to scroll the sidebar (as well as page
+  up and page down).
+
+New features from previous release (0.2.0)
+==========================================
+* Much improved INIFile and talkback parser: startup times are
+  dramatically reduced.
+* New VQA decoding code that can scale to higher resolutions.
+* New scrolling code.  The map scrolls very smoothly now, and the
+  right mouse button can be used to scroll the map.
+* The fog of war now has smooth edges.
+* If a sidebar icon can not be found, the type name is drawn instaead.
+* Targetting enemy infantry with the mouse should now be easier (picks
+  nearest soldier if mouse isn't on one)
+* Slightly more visible Red Alert support (see below).
+
+These features are incomplete:
+* Fog of war.
+* New plugin based VFS (virtual file system).
+* Framework for multiplayer.
+
+See the TODO file for a list of new features being worked on.
+
+INI File Overview
+=================
+FreeCNC comes with several ini files which allow you to extensively
+customise it.  All can be found in the "conf" subdirectory.
+
+    * freecnc.ini
+        - General configuration file allowing you to set default
+          command line parameters
+
+    * files.ini
+        - Defines where to look for mixfiles
+        - Defines which games use what playlists
+
+    * structure.ini
+        - Defines structure-related values, such as max health etc.
+
+    * unit.ini
+        - Controls unit variables such type, speed, etc.
+
+    * weapons.ini
+        - Defines the weapon types, the warheads and the explosion
+        animations.
+
+    * songs.ini
+        - Defines the various playlists.  At the end of songs.ini, there
+    is a playlist called EG.  To use it, change the relevant "playN=TD"
+    line in files.ini to "playN=EG".  This playlist uses tracks that
+    only exist in the English DOS version, although may exist in other
+    editions of the DOS version.
+
+    * talkback.ini
+        - Talkback information is stored here.
+
+The following ini files shouldn't normally need to be edited:
+    * art.ini
+        - Allows you to modify the size and placement of structures
+          on tiles. Refer to that file for details
+
+    * templates.ini
+        - Contains values for all map tiles. See templates.ini
+          for details
+
+    * wsa.ini
+        - Not much at the moment.  Will contain information related to
+        the animations (e.g. select side, mission and target at end of
+        NOD campaign).
+
+Demo versions
+=============
+The maps available in the Tiberian Dawn demo are:
+
+SCG01EA, SCG03EA, SCG05EA, SCG06EA, SCG07EA and SCG10EA
+(No NOD missions)
+
+The Red Alert demo has
+SCG02EA SCG05EA and SCU01EA (which is oddly named as it's actually the second
+Soviet mission)
+
+Known bugs
+==========
+* VQAs play as fast as possible if sound is disabled.
+
+* The values for weapon ranges, how much damage they do, etc. need
+  adjusting.  Please send in your ideas on how to improve them.
+
+* Some maps rely on triggers to supply the human player with units, so
+  you will get a free MCV.  The map will be revealed and you will be
+  able to place the MCV on any clear cell (proximity checks are then
+  re-enabled).
+
+* The DLL code hasn't been tested on many platforms: known to work on
+  Linux, OpenBSD, Win32 with MSVC, and MacOSX.
+
+* Compilation on some operating systems with certain versions of gcc may
+  require disabling the -ansi -pedantic CFLAGS in the Makefiles.
+
+* Some maps in the original game have bugs in them, such as units and
+  structures placed on the same cell and more importantly not all
+  GDI/Civilian alliances are explicitly stated in all maps.  The
+  existing win detection code requires you to destroy /all/ enemies,
+  which will include civilians on these maps (even as GDI).  We'll fix
+  this in later releases by patching the maps.
+
+* Although this is an SDL issue, it's worth mentioning here:
+  If FreeCNC crashes when fullscreen, the mouse may be locked and you
+  may not be able to change the resolution back.  To fix this, rerun
+  FreeCNC in fullscreen then exit cleanly (you may have to change your
+  resolution back manually afterwards).
+
+"Eye-candy" bugs:
+* Muzzle flash animations aren't properly centred.
+* Construction Yard appears to build something when damaged to 50%
+  health.
+* MCV doesn't turn when deploying.
+* Buildings that start off with a rotation don't crumble when damaged to 50%+
+

@@ -1,0 +1,145 @@
+FreeCNC Requirements
+====================
+* A C++ compiler such as G++ >= 2.95 or MS Visual C++ >= 6
+* SDL 1.2.x or greater.
+* The "required" .mix files from Command & Conquer
+  (See Configuration Section Below)
+
+The following is optional:
+* SDL_net 1.2.x or greater.
+* zlib for the tgz plugin.
+
+Compiling FreeCNC on a system with GNU tools
+============================================
+1) Untar the freecnc tarball and cd into the directory it decompresses.
+2) Run "make".  This should automatically detect whether you have SDL_net and/or
+zlib installed as well as whether any special flags need to be used when
+compiling linking.
+3) The compilation produces an executable called "freecnc", and two dynamic
+objects, "mix.vfs" and "tgz.vfs" (or just mix.vfs if you don't have zlib
+installed)
+
+Please ensure that mix.vfs has been built and is in the same directory as the
+FreeCNC binary as the program will most likely not run if it isn't there.
+
+Compiling with Mingw
+====================
+The normal approach should work, but MSYS must be installed.  Also ensure that
+sdl-config is working.
+
+Compiling with MSVC
+===================
+NOTE: If you use MSVC 6, you must be using the latest service pack as our
+code causes a few compiler bugs to manifest.
+NOTE: The MSVC project isn't updated any more as none of the active developers
+have MSVC, although contributions are welcome.
+UPDATE (2003-11-15): Raymond Martineau has sent in a revised DSP file.
+
+Compiling FreeCNC with something else
+=====================================
+If you have managed to successfully compile and run freecnc with something not
+mentioned here, please let us know.  In theory, any platform that can support
+SDL, SDL_net and dynamic linking should work.  If alternative CFLAGS or LDFLAGS
+were needed, send in the appropriate files to drop into setup
+
+Installing FreeCNC
+==================
+FreeCNC relies on several data files (.mix files) from the original Command &
+Conquer. The .mix files can usually be extracted directly from the C&C CD or
+from an correctly installed C&C Directory.
+
+Tiberian Dawn
+-------------
+If you have the original (i.e. not Windows 95 or SVGA) version of C&C you need the following files:
+
+    * conquer.mix
+    * general.mix
+    * desert.mix
+    * temperat.mix
+    * winter.mix
+    * local.mix (located in the install subdirectory)
+    * speech.mix (located in the aud1 subdirectory)
+And it is recommended but not required that you have these files:
+    * scores.mix
+    * sounds.mix
+    * movies.mix
+    * transit.mix
+
+If you have the Windows 95 (GOLD) or SVGA version of C&C then you need
+the files mentioned above plus the following files, which are not
+directly available from the CD.
+    * cclocal.mix
+    * updatec.mix
+    * deseicnh.mix
+    * tempicnh.mix
+    * winticnh.mix
+    * speech.mix
+
+There have been several reports of the windows version installing
+properly in Wine, although it would be nice if someone digs up an
+extractor for the right version of installshield used.
+
+If you have the Covert Operations CD then copy the following files to
+access the new missions:
+    * sc-000.mix
+    * sc-001.mix
+
+It has been reported that freecnc runs with just the Covert Ops CD,
+although the number of maps available is limited.
+
+At this time, the Macintosh edition is not supported, but the demo files
+are available from Westwood's FTP server.
+
+The ini files can either be left in the conf subdirectory of where the
+freecnc binary resides, or be copied/moved to /etc/freecnc.
+
+It is possible to have access to both sides by copying the mixfiles
+onto your harddrive: only the general.mix and movies.mix files
+differ.  Ensure that the four different files are named uniquely, e.g.
+general-GDI.mix, and edit conf/files.ini appropriately.
+
+Red Alert 1
+-----------
+Copy main.mix and redalert.mix off either CD into conf/RedAlert/mix/. To use
+both sides, rename the files and change files.ini...
+
+Red Alert 1 (Aftermath)
+-----------------------
+You need to install the game and copy expand2.mix, hires1.mix, lores1.mix,
+main.mix and redalert.mix to conf/RedAlertAM/mix/. Then change the entry
+RedAlert to RedAlertAM in general.ini.
+
+Red Alert 1 (Demo)
+------------------
+There's only one zip to get:
+ftp.westwood.com/pub/redalert/previews/demo/ra95demo.zip
+
+You only need to extract these files:
+- ra95demo/INSTALL/REDALERT.MIX
+- ra95demo/INSTALL/MAIN.MIX
+
+Copy them into conf/RedAlertDemo/mix/. Then change the entry RedAlert
+to RedAlertDemo in general.ini.
+
+Tiberian Dawn (Demo)
+--------------------
+If you do not own any of the games that the FreeCNC game engine
+supports, you can download the Command & Conquer: Tiberian Dawn demo
+and configure FreeCNC to use it.
+
+1) Download the demo files from Westwood Studios's ftp site:
+   ftp://ftp.westwood.com/pub/cc1/previews/demo/cc1demo1.zip
+   ftp://ftp.westwood.com/pub/cc1/previews/demo/cc1demo2.zip
+   The first is needed, but the second only contains video and music.
+
+2) Unzip the files into the same directory as each other.
+Move the mix files to TiberianDawnDemo/mix/.
+
+NOTE: under Linux, use unzip -L to unzip the files, in order
+to unzip them using lowercase file names.
+
+3) Compile FreeCNC normally
+
+4) Run FreeCNC as normal.
+
+See the README file for more notes on using the demo version.

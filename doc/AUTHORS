@@ -1,0 +1,30 @@
+Current developers:
+- Bernd Ritter (comrad) <comrad@users.sourceforge.net>
+- Jonas Jermann (g0th) <jjermann@gmx.net>
+- Thomas Johansson (prencher) <prencher@prencher.dk>
+
+Past core developers (great work! In alphabetical order):
+- Jos Bol (Gandalf) <gandalf_t@users.sourceforge.net>
+- Kareem Dana (Kareemy) <kareemy@users.sourceforge.net>
+- Tim Johansson (Tim^) <timjoh@users.sourceforge.net>
+- Euan MacGregor (zx64) <zx64@users.sourceforge.net>
+
+Past authors (in alphabetical order):
+- Sander van Geloven (Pander) <pander@users.sourceforge.net>
+
+snprintf implementaion by
+- Mark Martinec <mark.martinec@ijs.si>, April 1999, June 2000
+(Modifications made by Euan MacGregor)
+
+Thanks to:
+- The creators of SDL for such a great toolkit.
+- Those who reverse engineered the formats.
+- Sourceforge for hosting us, even when things turned a bit ugly.
+- Julian Seward and the rest for the awesomely cool valgrind.
+- Mark Martinec for his portable implementation of snprintf.
+- Nico Kist for extensive testing on OSX and a Cocoa based launcher.
+- and<dot>koop<at>web<dot>de for the following patches:
+    + More complete Red Alert support (contained ratemplates.ini).
+    + Fixing a fullscreen crash bug on win32.
+- Jonas Jermann for further improvements to Red Alert support.
+- Anybody else who I've forgotten to thank.

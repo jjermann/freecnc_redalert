@@ -1,0 +1,1 @@
+FREECNC_LIBS += -lbe

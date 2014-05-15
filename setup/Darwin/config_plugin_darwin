@@ -1,0 +1,2 @@
+PLUGIN_LDFLAGS = -bundle -flat_namespace -undefined suppress
+PLUGIN_CFLAGS  = -keep_private_externs -nostdlib -r

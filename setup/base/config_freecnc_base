@@ -1,0 +1,2 @@
+FREECNC_CFLAGS   += -I./include $(NET_CFLAGS)
+FREECNC_LIBS     += `sdl-config --libs` $(NET_LIBS)

@@ -1,0 +1,7 @@
+define TEST_template
+@echo Checking for $($(join $1,_NAME))
+@$(CC) $(join setup/tests/test,$1).c $($(join $1,_CFLAGS)) $($(join $1,_LIBS)) -o $(join test,$1) || true
+@$(join ./test, $1) && cp $(join setup/config_,$1) . || cp $(join setup/config_no,$1) .
+@rm -f $(join test,$1)
+
+endef

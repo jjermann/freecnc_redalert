@@ -1,0 +1,26 @@
+DEBUG_FLAGS = -g
+#DEBUG_FLAGS = -g -DDEBUG
+OPT_FLAGS   =
+BASE_CFLAGS = -Wall -Werror $(DEBUG_FLAGS) $(OPT_FLAGS) `sdl-config --cflags`
+CFLAGS      = $(BASE_CFLAGS)
+CXXFLAGS    = $(subst $(CSTRICTNESS), $(CXXSTRICTNESS), $(CFLAGS))
+LIBS        = `sdl-config --libs`
+FREECNC_CFLAGS   += -I./include $(NET_CFLAGS)
+FREECNC_LIBS     += `sdl-config --libs` $(NET_LIBS)
+MIX_PLUGIN_CFLAGS  = -I../../include -I../ $(PLUGIN_CFLAGS)
+MIX_PLUGIN_LDFLAGS = $(PLUGIN_LDFLAGS)
+MIX_PLUGIN_LIBS    = $(PLUGIN_LIBS)
+TGZ_PLUGIN_CFLAGS  = -I../../include -I../ $(PLUGIN_CFLAGS) $(ZLIB_CFLAGS)
+TGZ_PLUGIN_LDFLAGS = $(PLUGIN_LDFLAGS) $(ZLIB_LDFLAGS)
+TGZ_PLUGIN_LIBS    = $(PLUGIN_LIBS) $(ZLIB_LIBS)
+TOOLS_CFLAGS = -I../../client/src/include
+CSTRICTNESS = -ansi
+CXXSTRICTNESS = -std=c++98
+CFLAGS   += -pedantic $(CSTRICTNESS)
+FREECNC_LIBS += -ldl
+XMMS=0
+PLUGIN_LDFLAGS = -fPIC -shared
+NET_LIBS += -lSDL_net
+SDLNET=1
+ZLIB_LIBS += -lz
+ZLIB=1

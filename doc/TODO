@@ -1,0 +1,124 @@
+List of features being worked on/designed currently
+***************************************************
+- Fixing assumptions that held when TD was the only game supported (e.g.
+  player in campaign is either "GoodGuy", "BadGuy" or "Special",
+  unit/structure colourings, etc.)
+
+- Rearranging the layout of config files so each game gets its own
+  directory making importing mods a lot easier.
+
+- Fixing up the rough edges of the sidebar code (placement of a lot of
+  things are inaccurate, fairly broken in RA, minimap isn't interactive),
+  as well as incorporating various patches sent in to add things like build
+  queueing (this also leads towards more functionality in the scripting
+  interface).
+
+Other stuff
+***********
+General
+=======
+- Add support for more file types (e.g. Ogg, png, mp3, etc.)
+
+Gameplay
+========
+- Make some walls and infantry squashable
+
+- More resource management: from tiberium growth to disabling powerred
+  structures when a blackout occurs.
+
+- A few features from the more recent games from the C&C series: right click
+  dragging to scroll (DONE), and the autofill method of building walls.
+
+- Passenger/loading code
+
+- Structure bibs (small patches of rough ground that goes underneath the
+  building and can not be built on).  This also fixes the UI glitch of not
+  appearing to be able to place some types of buildings right at the top (this
+  is because the top row of tiles isn't blocked so doesn't appear in the
+  placement mat).
+
+- Finishing Red Alert support.  (Map loading more or less done, mostly
+  related to getting the new config system done to make switching between
+  the two games more simple).
+
+UI
+==
+- A gui toolkit for the menus etc.
+
+- Rewriting the unit and structure animation code.  This leads to several
+  things, such as support for aircraft and boats, as well as making the game
+  even more customisable.  Other features that are easier to do as a
+  consequence of this streamlining are proper firing, dying, etc. animations
+  for infantry.
+
+- Improve the minimap to show contacts (in progress) and make it interactive.
+
+- Build clocks as similar to the ones in Red Alert 2 and Generals (counts down
+  to when a superweapon will be ready).
+
+Network
+=======
+- A protocol proxy for being able to debug a network server without breaking the
+  game: players connect to the proxy which forwards between them and the server
+  and will (ideally) be able to cope with anything upto the server being
+  restarted.
+
+AI
+==
+- Improving the AI (including base building/management).  The AI will probably
+  be made pluginable and tie into the scriping engine.
+
+- Scripting (including support for map triggers).  zx64 has had his eye on lua
+  for a while.
+
+
+Specific todo:
+==============
+
+bugs:
+some units segfault if they attack (democharge) => splitOrPrereqs
+shot, explosion: only left upper part not center
+radar lost after (any) building crash (DONE)
+radar image not properly redrawn (DONE)
+tanks come out of tent with 2 weaps (DONE)
+organic warhead?
+prereqs in SCM02EA?
+ra map loading, player side, doesn't work with PS_MULTI,
+  initial techlevel (in preload)
+p::ccmap->getGameMode() == 0 not set correctly (?)
+black!=transparent
+
+fix:
+no hardcoded 0x1f, use loopend? (ALMOST DONE)
+missing: structs, maybe attack anim
+unit turn with loopend!=0x1f (DONE)
+flaws of the new conf/ system
+fog
+
+todo:
+terrain images (mine, etc) (DONE?)
+use more template types in code
+unit/structure(type) specific placement (DONE)
+unit/structure(type) specific movement (DONE?)
+move all game specific datas to ini files
+proper unit placement
+superweapons: atom,chronos,gap,bomb,spy,etc
+more speech (to ini files if possible)
+transparent building progress bar (DONE)
+idea: vehicle smoke as pip?
+
+
+GENERAL TODO:
+=============
+
+powerbar
+ai (also basic ai stuff like automatic attack, etc)
+changeable terrain (bridge)
+minimap control
+sidebar graphics (DONE)
+repair (DONE)
+sell (almost DONE)
+infiltrate
+animation code
+passenger
+mine
